@@ -1,0 +1,250 @@
+{
+  "generated_at": "2026-08-10T19:56:37+00:00",
+  "task": "binary sentiment vs star rating (1-2 = negative, 4-5 = positive, 3 excluded)",
+  "sample": {
+    "n": 6000,
+    "per_star": {
+      "2": 1500,
+      "4": 1500,
+      "1": 1500,
+      "5": 1500
+    },
+    "stratified": true,
+    "seed": 42,
+    "source": "/home/anmol/project/data/processed/reviews.parquet"
+  },
+  "model": "distilbert-base-uncased-finetuned-sst-2-english",
+  "device": "cuda",
+  "review_representation": "polarity = mean(score('<title>. <body>'[:384 tok]), score('<title>'))",
+  "decision_rule": "predict positive iff polarity > 0 (no threshold tuning)",
+  "neutral_band": 0.2,
+  "results": {
+    "transformer": {
+      "backend": "transformer",
+      "description": "distilbert-base-uncased-finetuned-sst-2-english on cuda",
+      "seconds": 6.69,
+      "reviews_per_second": 896.4,
+      "strict": {
+        "n": 6000,
+        "accuracy": 0.8903333333333333,
+        "macro_precision": 0.8927639311007318,
+        "macro_recall": 0.8903333333333333,
+        "macro_f1": 0.8901634039151238,
+        "per_class": {
+          "negative": {
+            "precision": 0.8618665018541409,
+            "recall": 0.9296666666666666,
+            "f1": 0.894483643361129,
+            "support": 3000
+          },
+          "positive": {
+            "precision": 0.9236613603473227,
+            "recall": 0.851,
+            "f1": 0.8858431644691187,
+            "support": 3000
+          }
+        },
+        "confusion_matrix": {
+          "labels": [
+            "negative",
+            "positive"
+          ],
+          "rows_are_truth": true,
+          "matrix": [
+            [
+              2789,
+              211
+            ],
+            [
+              447,
+              2553
+            ]
+          ]
+        }
+      },
+      "banded": {
+        "neutral_band": 0.2,
+        "coverage": 0.8346666666666667,
+        "n": 5008,
+        "accuracy": 0.9257188498402555,
+        "macro_precision": 0.9301303822524591,
+        "macro_recall": 0.9241926380887227,
+        "macro_f1": 0.9252749220370342,
+        "per_class": {
+          "negative": {
+            "precision": 0.8939124243503026,
+            "recall": 0.9713733075435204,
+            "f1": 0.9310344827586207,
+            "support": 2585
+          },
+          "positive": {
+            "precision": 0.9663483401546157,
+            "recall": 0.8770119686339248,
+            "f1": 0.9195153613154479,
+            "support": 2423
+          }
+        },
+        "confusion_matrix": {
+          "labels": [
+            "negative",
+            "positive"
+          ],
+          "rows_are_truth": true,
+          "matrix": [
+            [
+              2511,
+              74
+            ],
+            [
+              298,
+              2125
+            ]
+          ]
+        }
+      },
+      "accuracy_by_star": {
+        "1": {
+          "n": 1500,
+          "accuracy": 0.96
+        },
+        "2": {
+          "n": 1500,
+          "accuracy": 0.8993333333333333
+        },
+        "4": {
+          "n": 1500,
+          "accuracy": 0.7633333333333333
+        },
+        "5": {
+          "n": 1500,
+          "accuracy": 0.9386666666666666
+        }
+      },
+      "mean_abs_polarity": 0.7994968295097351
+    },
+    "vader": {
+      "backend": "vader",
+      "description": "vaderSentiment lexicon/rule model (compound score)",
+      "seconds": 7.74,
+      "reviews_per_second": 774.8,
+      "strict": {
+        "n": 6000,
+        "accuracy": 0.7905,
+        "macro_precision": 0.8061848639863478,
+        "macro_recall": 0.7905,
+        "macro_f1": 0.7877821913691957,
+        "per_class": {
+          "negative": {
+            "precision": 0.8754847048685911,
+            "recall": 0.6773333333333333,
+            "f1": 0.763766209359143,
+            "support": 3000
+          },
+          "positive": {
+            "precision": 0.7368850231041044,
+            "recall": 0.9036666666666666,
+            "f1": 0.8117981733792484,
+            "support": 3000
+          }
+        },
+        "confusion_matrix": {
+          "labels": [
+            "negative",
+            "positive"
+          ],
+          "rows_are_truth": true,
+          "matrix": [
+            [
+              2032,
+              968
+            ],
+            [
+              289,
+              2711
+            ]
+          ]
+        }
+      },
+      "banded": {
+        "neutral_band": 0.2,
+        "coverage": 0.7983333333333333,
+        "n": 4790,
+        "accuracy": 0.8363256784968685,
+        "macro_precision": 0.8605402271164757,
+        "macro_recall": 0.819761972129872,
+        "macro_f1": 0.8266074876960833,
+        "per_class": {
+          "negative": {
+            "precision": 0.9288486416558862,
+            "recall": 0.680568720379147,
+            "f1": 0.7855579868708972,
+            "support": 2110
+          },
+          "positive": {
+            "precision": 0.7922318125770653,
+            "recall": 0.9589552238805971,
+            "f1": 0.8676569885212694,
+            "support": 2680
+          }
+        },
+        "confusion_matrix": {
+          "labels": [
+            "negative",
+            "positive"
+          ],
+          "rows_are_truth": true,
+          "matrix": [
+            [
+              1436,
+              674
+            ],
+            [
+              110,
+              2570
+            ]
+          ]
+        }
+      },
+      "accuracy_by_star": {
+        "1": {
+          "n": 1500,
+          "accuracy": 0.7473333333333333
+        },
+        "2": {
+          "n": 1500,
+          "accuracy": 0.6073333333333333
+        },
+        "4": {
+          "n": 1500,
+          "accuracy": 0.868
+        },
+        "5": {
+          "n": 1500,
+          "accuracy": 0.9393333333333334
+        }
+      },
+      "mean_abs_polarity": 0.4503207206726074
+    }
+  },
+  "chosen_backend": "transformer",
+  "clause_level": {
+    "why": "aspect sentiment is read off clauses, not whole reviews, so the clause scorer is validated separately with distant supervision and Platt-scaled to restore usable spread in the polarity magnitudes",
+    "known_limitation": "SST-2 has no neutral class, so neutral factual clauses ('I average 8 hours on a battery') score negative; aspect pos_share is therefore a comparative signal (it rises monotonically with the star rating for every aspect) and not an absolute approval rate",
+    "n_clauses": 2786,
+    "labels": "clauses of 1-star reviews = negative, 5-star = positive (distant supervision)",
+    "raw_accuracy": 0.7652548456568558,
+    "raw_positive_rate": 0.32914572864321606,
+    "calibrated_accuracy_cv5": 0.7645369705671213,
+    "calibrated_positive_rate_cv5": 0.3356066044508256,
+    "true_positive_rate": 0.4310839913854989,
+    "params": {
+      "a": 0.2144230390990572,
+      "b": 0.16851571169806548
+    },
+    "shipped_params": {
+      "a": 0.205,
+      "b": 0.3286
+    }
+  },
+  "justification": "transformer reaches macro-F1 0.890 / accuracy 0.890 vs vader's 0.788 / 0.790 on the same 6000-review stratified sample (+10.0 accuracy points); vader runs at 775 rev/s vs 896 rev/s, so it stays as the fallback path."
+}

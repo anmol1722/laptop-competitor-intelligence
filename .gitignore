@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Environment and OS
+.env
+.DS_Store
+
+# Logs
+*.log
+
+# Large reproducible datasets
+data/raw/*.jsonl
+data/processed/reviews.parquet
+report
