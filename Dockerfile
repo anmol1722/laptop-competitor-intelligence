@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 COPY src/ ./src/
 COPY data/processed/products.parquet data/processed/product_sentiment.parquet data/processed/review_sentiment.parquet data/processed/product_embeddings.npy data/processed/product_embedding_ids.json ./data/processed/
-RUN mkdir -p eval report && chown -R app:app /app
+RUN mkdir -p eval report /home/app/.cache/huggingface \
+    && chown -R app:app /app /home/app/.cache
 
 USER app
 EXPOSE 8000

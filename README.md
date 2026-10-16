@@ -234,6 +234,45 @@ On an Oracle Always Free Ubuntu VM, install Docker, clone this repository, creat
 
 Verify `/api/health` and `/api/chat/status`, then ask a catalogue question in the browser. A configured chat status means credentials are present; the first real completion verifies provider access. Hosted chat needs more RAM than the dashboard alone because it loads CPU MiniLM and the lexical index. The container build and first model download require outbound internet access. No deployment or provider account is created automatically by these files.
 
+### Public deployment with HTTPS
+
+`compose.yaml` runs the app behind Caddy, obtains and renews HTTPS certificates, restarts both services after a reboot, and preserves downloaded retrieval weights and certificates in Docker volumes. The app's port 8000 stays inside the Docker network. Use a CPU server with at least 2 GB RAM; 4–6 GB gives the image build and retrieval more headroom.
+
+For a free Oracle deployment, select an Always Free Ampere A1 Ubuntu VM within your account's current allowance. Enable a public IP and inbound TCP **80 and 443** in its cloud network rules; retain SSH access. These ports must also be available through the host firewall. See [Oracle's current free resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).
+
+On a fresh Ubuntu 24.04 server:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2 git
+sudo systemctl enable --now docker
+git clone https://github.com/anmol1722/laptop-competitor-intelligence.git
+cd laptop-competitor-intelligence
+cp .env.example .env
+chmod 600 .env
+nano .env
+```
+
+Set `GROQ_API_KEY` privately on the server and set `APP_DOMAIN` to your hostname, without `https://`. If you do not own a domain, a hostname such as `laptop.YOUR_PUBLIC_IP.sslip.io` resolves to the embedded IP and can receive a normal HTTPS certificate; replace `YOUR_PUBLIC_IP` with the VM's actual IPv4 address. See [sslip.io's DNS and TLS documentation](https://sslip.io/).
+
+Start the public deployment:
+
+```bash
+sudo docker compose up -d --build --wait --wait-timeout 300
+sudo docker compose ps
+```
+
+Open `https://YOUR_APP_DOMAIN` and test a search and a chat answer. Initial image building and the first MiniLM download take longer than subsequent starts. If certificates or routing fail, check DNS, TCP ports 80/443 and `sudo docker compose logs --tail 100 caddy dashboard`. Do not print `docker compose config` in shared logs because its expanded output can include runtime secrets.
+
+For later source updates, keep the existing server `.env` and volumes:
+
+```bash
+git pull --ff-only
+sudo docker compose up -d --build --wait --wait-timeout 300
+```
+
+The local `.env` is ignored by Git and excluded from image builds. It is provided only as a runtime environment file; Caddy receives the hostname and never receives the Groq key. A temporary tunnel from a Mac is a preview: it stops working when that Mac, the local app or the tunnel goes offline. The VM deployment runs independently of your Mac.
+
 ## Rebuild the data artifacts
 
 The repository's `.gitignore` excludes the three source/generated files larger than GitHub's normal file limit:

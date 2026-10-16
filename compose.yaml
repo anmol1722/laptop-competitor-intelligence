@@ -1,0 +1,71 @@
+name: laptop-intelligence
+
+services:
+  dashboard:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+      OMP_NUM_THREADS: "2"
+    # Only Caddy publishes ports. Trust its forwarding headers on this private network.
+    command:
+      - python
+      - -m
+      - uvicorn
+      - src.web.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "1"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+    expose:
+      - "8000"
+    volumes:
+      - model_cache:/home/app/.cache/huggingface
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/products/search?limit=1', timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN to the public hostname in .env}
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  model_cache:
+  caddy_data:
+  caddy_config:
