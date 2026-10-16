@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.env.*
+**/__pycache__
+**/*.py[cod]
+**/*.log
+*.zip
+*.docx
+*.pdf
+report
+data/raw
+data/processed/reviews.parquet

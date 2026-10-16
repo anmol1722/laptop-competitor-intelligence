@@ -4,6 +4,7 @@ Every module imports from here so the column names stay consistent across the
 pipeline, the matching index, the sentiment pass, the RAG agent and the app.
 """
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +35,11 @@ PRODUCT_SENTIMENT_PARQUET = PROCESSED / "product_sentiment.parquet"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 SENTIMENT_MODEL = "distilbert-base-uncased-finetuned-sst-2-english"
 LLM_MODEL = "unsloth/Qwen2.5-7B-Instruct-bnb-4bit"
+
+# Hosted generation is the default for public, CPU-only deployments. Secrets are
+# read by the backend from the environment, never returned in API responses.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
 
 # --- products.parquet schema contract ---
 # Identity

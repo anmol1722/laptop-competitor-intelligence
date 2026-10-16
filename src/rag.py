@@ -20,9 +20,9 @@ The agent answers natural-language questions about the 25,841-product catalogue 
    The audit is returned with the answer, so the UI can render citations *and*
    show when the model drifted off its evidence.
 
-The local LLM is ``config.LLM_MODEL`` (Qwen2.5-7B-Instruct, pre-quantized 4-bit)
-loaded once behind a process-wide singleton, so importing this module is cheap
-and Streamlit reruns do not reload 5.5 GB of weights.
+Generation uses Groq by default (GROQ_API_KEY). Set LLM_PROVIDER=local to use
+``config.LLM_MODEL`` on an NVIDIA GPU. Both backends reuse the same evidence,
+grounding prompt and answer audit, and are selected lazily.
 
 Typical use::
 
@@ -57,6 +57,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import config  # noqa: E402
 from config import (  # noqa: E402  (path bootstrap must run first)
     LLM_MODEL,
     PRODUCT_KEY,
@@ -1002,7 +1003,7 @@ def get_retriever() -> EvidenceRetriever:
 
 
 # --------------------------------------------------------------------------------------
-# 6. Local LLM singleton
+# 6. Generation backends
 # --------------------------------------------------------------------------------------
 
 
@@ -1034,6 +1035,8 @@ class LocalLLM:
     is passed at load time, only the compute dtype and the SDPA attention kernel.
     Measured on the RTX 4060 Laptop 8 GB: 5.6 GB VRAM resident, ~31 tokens/s decode.
     """
+
+    provider = "local"
 
     def __init__(self, model_name: str = LLM_MODEL, device: str = "cuda") -> None:
         self.model_name = model_name
@@ -1114,9 +1117,15 @@ class LocalLLM:
 
 
 @lru_cache(maxsize=1)
-def get_llm(device: str = "cuda") -> LocalLLM:
-    """Process-wide cached LLM handle (weights still load lazily on first use)."""
-    return LocalLLM(device=device)
+def get_llm(device: str = "cuda") -> Any:
+    """Select generation without changing CPU retrieval or the grounding audit."""
+    if config.LLM_PROVIDER == "groq":
+        from hosted_llm import GroqLLM
+
+        return GroqLLM(config.GROQ_MODEL)
+    if config.LLM_PROVIDER == "local":
+        return LocalLLM(device=device)
+    raise ValueError("LLM_PROVIDER must be groq or local")
 
 
 # --------------------------------------------------------------------------------------
@@ -1148,7 +1157,16 @@ sentences needs a marker on each of them.
 9. Each customer-review block names the ONE product it is about ("about [P3]"). Never use \
 a review as evidence for any other product.
 10. Be concise and decision-useful: at most 6 short bullets or 200 words, no preamble, no \
-restating of these instructions, and finish your last sentence."""
+restating of these instructions, and finish your last sentence.
+11. Product prices, specifications and aggregate sentiment percentages come from [P#] \
+blocks: cite that product's [P#] for those claims. An [R#] proves ONLY the opinion in its \
+own quoted snippet, not aggregate percentages or specs. Use [S#] for market statistics.
+12. Include the matching [P#] in every sentence about a product. If citing a review in \
+that sentence, its "about [P#]" must match that product. Omit a review citation when no \
+snippet supports the claim; do not borrow a different product's reviews.
+13. Preserve the exact units printed in the evidence: for example, do not turn 1024 GB \
+into 1 TB. Limit superlatives to what the retrieved evidence actually establishes; a \
+relevance-ranked sample cannot establish the best or cheapest laptop in the full market."""
 
 _TASK_HINTS = {
     "spec_compare": (
@@ -1341,7 +1359,7 @@ class RagAgent:
     """
 
     def __init__(self, retriever: EvidenceRetriever | None = None,
-                 llm: LocalLLM | None = None) -> None:
+                 llm: Any = None) -> None:
         self.retriever = retriever or get_retriever()
         self.llm = llm or get_llm()
 

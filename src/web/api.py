@@ -10,10 +10,9 @@ already do the analysis; this layer does three things and nothing else:
     ``NaN``/``NaT``/``Inf`` and Timestamps are converted to plain JSON types;
     ``NaN`` becomes ``null`` because ``json.dumps`` would otherwise emit the
     literal ``NaN``, which is not valid JSON and breaks ``JSON.parse``.
-3.  Keeps the 7B LLM **out** of startup.  ``rag`` is imported and the weights are
-    materialised on the first ``POST /api/chat``, behind a GPU-availability check,
-    so the server boots in a couple of seconds and an unavailable GPU surfaces as
-    a structured 503 rather than a stack trace.
+3.  Keeps generation **out** of startup. Groq serves chat on CPU-only hosts;
+    LLM_PROVIDER=local retains the optional NVIDIA model. Retrieval and the answer
+    audit are shared, with bounded caching and request limits for the public API.
 
 Honesty rules baked into the responses (these are data realities, not bugs):
   * ~69% of products have no price.  Those come back as ``price: null`` with
@@ -80,6 +79,8 @@ import matching  # noqa: E402
 import pricing  # noqa: E402
 import sentiment  # noqa: E402
 from config import ASPECTS, PRODUCT_KEY, SEGMENTS  # noqa: E402
+from hosted_llm import HostedLLMError  # noqa: E402
+from web.chat_controls import ChatControls  # noqa: E402
 
 LOG = logging.getLogger("web.api")
 
@@ -1350,7 +1351,7 @@ def market_overview() -> dict[str, Any]:
 
 
 # ======================================================================================
-# 6. Chat (lazy LLM)
+# 6. Chat (hosted or local generation)
 # ======================================================================================
 
 
@@ -1371,11 +1372,10 @@ def _gpu_memory_used_mib() -> tuple[int | None, int | None, str | None]:
 
 
 class LLMManager:
-    """Lazy, thread-safe owner of the rag agent + 7B LLM.
+    """Lazy, thread-safe owner of the RAG agent and configured generation backend.
 
     States: ``unloaded`` -> ``loading`` -> ``ready``; ``unavailable`` on a failed load.
-    Only one generation runs at a time (one GPU, one resident model), so a second
-    concurrent chat gets an honest 429 instead of an OOM.
+    One generation at a time protects CPU retrieval memory and the shared quota.
     """
 
     def __init__(self) -> None:
@@ -1385,43 +1385,60 @@ class LLMManager:
         self.load_seconds: float | None = None
         self.loaded_at: float | None = None
         self.n_answers: int = 0
-        self.model_name: str = config.LLM_MODEL
+        self.provider: str = config.LLM_PROVIDER
+        self.model_name: str = (config.LLM_MODEL if self.provider == "local"
+                                else config.GROQ_MODEL)
         self._load_lock = threading.Lock()
         self._gen_lock = threading.Lock()
         self._agent: Any = None
 
     # -- introspection -------------------------------------------------------------------
+    def configuration_error(self) -> str | None:
+        if self.provider not in {"groq", "local"}:
+            return "The site's chat provider configuration is invalid."
+        if self.provider == "groq" and (
+                not os.getenv("GROQ_API_KEY", "").strip() or not self.model_name):
+            return "Chat has not been configured by the site owner yet."
+        return None
+
     def status(self) -> dict[str, Any]:
-        used, total, gpu_err = _gpu_memory_used_mib()
+        config_error = self.configuration_error()
+        state = "unavailable" if config_error else self.state
+        gpu = None
+        if self.provider == "local":
+            used, total, gpu_err = _gpu_memory_used_mib()
+            gpu = {
+                "memory_used_mib": used,
+                "memory_total_mib": total,
+                "busy_threshold_mib": GPU_BUSY_MIB,
+                "free": used is not None and used <= GPU_BUSY_MIB,
+                "held_by_this_process": state == "ready",
+                "can_load": (used is not None and used <= GPU_BUSY_MIB) or state == "ready",
+                "error": gpu_err,
+            }
+        hints = {
+            "unloaded": ("Chat is configured. The first question also prepares the "
+                         "catalogue search." if self.provider == "groq" else
+                         "The local model loads on the first chat request (~30-60 s)."),
+            "loading": "Preparing chat. Please wait a moment.",
+            "ready": "Ready to answer questions using catalogue and review evidence.",
+            "unavailable": config_error or self.error or "Chat is currently unavailable.",
+        }
         return {
-            "state": self.state,                       # unloaded | loading | ready | unavailable
-            "ready": self.state == "ready",
-            "loading": self.state == "loading",
-            "available": self.state != "unavailable",
-            "accepting_input": self.state in ("unloaded", "ready"),
+            "state": state,
+            "provider": self.provider,
+            "ready": state == "ready",
+            "loading": state == "loading",
+            "available": state != "unavailable",
+            "accepting_input": state in ("unloaded", "ready"),
             "model": self.model_name,
             "load_seconds": self.load_seconds,
             "answers_served": self.n_answers,
             "busy": self._gen_lock.locked(),
-            "error": self.error,
-            "error_type": self.error_type,
-            "gpu": {
-                "memory_used_mib": used,
-                "memory_total_mib": total,
-                "busy_threshold_mib": GPU_BUSY_MIB,
-                # `free` is the raw reading; once our own model is resident the used
-                # figure is mostly *us*, which is why `can_load` is the flag to act on
-                "free": used is not None and used <= GPU_BUSY_MIB,
-                "held_by_this_process": self.state == "ready",
-                "can_load": (used is not None and used <= GPU_BUSY_MIB) or self.state == "ready",
-                "error": gpu_err,
-            },
-            "hint": {
-                "unloaded": "The 7B model loads on the first chat request (~30-60 s).",
-                "loading": "Model weights are loading; the input should stay disabled.",
-                "ready": "Model resident on the GPU; answers take ~2-17 s.",
-                "unavailable": "The model could not be loaded; chat is disabled.",
-            }[self.state],
+            "error": config_error or self.error,
+            "error_type": "configuration_error" if config_error else self.error_type,
+            "gpu": gpu,
+            "hint": hints[state],
         }
 
     # -- loading -------------------------------------------------------------------------
@@ -1442,12 +1459,16 @@ class LLMManager:
 
     def ensure_ready(self) -> tuple[bool, dict[str, Any] | None]:
         """Load the agent + weights if needed. Returns ``(ok, structured_error)``."""
+        config_error = self.configuration_error()
+        if config_error:
+            return False, {"code": "chat_not_configured", "message": config_error,
+                           "retryable": False}
         if self.state == "ready":
             return True, None
         with self._load_lock:
             if self.state == "ready":
                 return True, None
-            ok, gpu_info = self._wait_for_gpu()
+            ok, gpu_info = (self._wait_for_gpu() if self.provider == "local" else (True, {}))
             if not ok:
                 return False, {
                     "code": gpu_info.get("reason", "gpu_busy"),
@@ -1467,7 +1488,7 @@ class LLMManager:
             try:
                 import rag  # noqa: PLC0415 - deliberately lazy (pulls torch/transformers)
 
-                STATE.module_status["rag"]["imported"] = True
+                STATE.module_status.setdefault("rag", {})["imported"] = True
                 agent = rag.get_agent()
                 agent.llm.load()
                 self._agent = agent
@@ -1479,13 +1500,13 @@ class LLMManager:
                 return True, None
             except Exception as exc:
                 self.state = "unavailable"
-                self.error = str(exc)
+                self.error = "Chat could not be initialized. The site owner needs to check the server."
                 self.error_type = type(exc).__name__
-                STATE.module_status["rag"]["error"] = f"{self.error_type}: {self.error}"
+                STATE.module_status.setdefault("rag", {})["error"] = self.error
                 LOG.error("LLM load failed\n%s", traceback.format_exc())
                 return False, {
                     "code": "model_load_failed",
-                    "message": f"{self.error_type}: {self.error}",
+                    "message": self.error,
                     "retryable": False,
                 }
 
@@ -1505,6 +1526,7 @@ class LLMManager:
 
 
 LLM = LLMManager()
+CHAT_CONTROLS = ChatControls()
 
 
 class ChatRequest(BaseModel):
@@ -1520,55 +1542,71 @@ def chat_status() -> dict[str, Any]:
     return LLM.status()
 
 
-@app.post("/api/chat", summary="Grounded RAG answer with evidence and a hallucination audit")
-def chat(body: ChatRequest = Body(...)) -> Any:
-    question = body.question.strip()
-    if not question:
-        raise HTTPException(422, "question must not be blank")
+def _chat_error(message: str, code: str, *, status: int = 503,
+                retryable: bool = False, retry_after: int | None = None) -> SafeJSONResponse:
+    return SafeJSONResponse(
+        status_code=status,
+        content={"error": {"status": status, "type": code, "code": code,
+                           "message": message, "retryable": retryable,
+                           "retry_after": retry_after}, "llm": LLM.status()},
+        headers={"Retry-After": str(retry_after)} if retry_after else None,
+    )
 
-    if not LLM.gen_lock.acquire(timeout=2.0):
-        return SafeJSONResponse(
-            status_code=429,
-            content={"error": {"status": 429, "type": "busy", "code": "generation_in_progress",
-                               "message": "Another answer is being generated on the single "
-                                          "GPU; retry in a few seconds."},
-                     "llm": LLM.status()},
-            headers={"Retry-After": "5"},
+
+@app.post("/api/chat", summary="Grounded RAG answer with evidence and a hallucination audit")
+def chat(request: Request, body: ChatRequest = Body(...)) -> Any:
+    question = body.question.strip()
+    if len(question) < 3:
+        raise HTTPException(422, "question must contain at least 3 non-padding characters")
+
+    # Trust the server's client address, never raw user-supplied forwarding headers.
+    retry_after = CHAT_CONTROLS.check_rate(request.client.host if request.client else "unknown")
+    if retry_after:
+        return _chat_error(
+            f"You have asked several questions recently. Please try again in {retry_after} seconds.",
+            "client_rate_limited", status=429, retryable=True, retry_after=retry_after,
         )
-    try:
-        t0 = time.time()
-        ok, err = LLM.ensure_ready()
-        if not ok:
-            status = 503
-            return SafeJSONResponse(
-                status_code=status,
-                content={
-                    "error": {"status": status, "type": "llm_unavailable",
-                              "code": err.get("code"), "message": err.get("message"),
-                              "retryable": err.get("retryable", False)},
-                    "detail": err,
-                    "llm": LLM.status(),
-                    "question": question,
-                },
-                headers={"Retry-After": "15"} if err.get("retryable") else None,
+    key = (LLM.provider, LLM.model_name, " ".join(question.split()),
+           body.max_new_tokens, body.temperature)
+    t0 = time.monotonic()
+    payload = CHAT_CONTROLS.get_cached(key)
+    cached = payload is not None
+    if payload is None:
+        retry_after = CHAT_CONTROLS.retry_after()
+        if retry_after:
+            return _chat_error(
+                f"The shared chat allowance is temporarily exhausted. Please try again in {retry_after} seconds.",
+                "provider_rate_limited", status=429, retryable=True, retry_after=retry_after,
+            )
+        if not LLM.gen_lock.acquire(blocking=False):
+            return _chat_error(
+                "Another answer is being generated. Please retry in a few seconds.",
+                "generation_in_progress", status=429, retryable=True, retry_after=5,
             )
         try:
-            payload = LLM.answer(question, body.max_new_tokens, body.temperature)
-        except Exception as exc:
-            LOG.error("generation failed\n%s", traceback.format_exc())
-            return SafeJSONResponse(
-                status_code=500,
-                content={
-                    "error": {"status": 500, "type": "generation_failed",
-                              "code": "generation_failed",
-                              "message": f"{type(exc).__name__}: {exc}"},
-                    "llm": LLM.status(),
-                    "question": question,
-                },
-            )
-        latency = time.time() - t0
-    finally:
-        LLM.gen_lock.release()
+            ok, err = LLM.ensure_ready()
+            if not ok:
+                return _chat_error(err["message"], err["code"],
+                                   retryable=err.get("retryable", False),
+                                   retry_after=15 if err.get("retryable") else None)
+            try:
+                payload = LLM.answer(question, body.max_new_tokens, body.temperature)
+            except HostedLLMError as exc:
+                LOG.warning("hosted chat failed: %s", exc.code)
+                if exc.code == "provider_rate_limited":
+                    CHAT_CONTROLS.defer_provider(exc.retry_after or 60)
+                if exc.code == "provider_auth_error":
+                    LLM.state, LLM.error, LLM.error_type = "unavailable", str(exc), exc.code
+                return _chat_error(str(exc), exc.code, status=exc.status_code,
+                                   retryable=exc.retryable, retry_after=exc.retry_after)
+            except Exception:
+                LOG.error("generation failed\n%s", traceback.format_exc())
+                return _chat_error("Chat could not complete this answer. Please try again later.",
+                                   "generation_failed", status=500, retryable=True)
+            CHAT_CONTROLS.cache_answer(key, payload)
+        finally:
+            LLM.gen_lock.release()
+    latency = time.monotonic() - t0
 
     evidence = payload.get("evidence", [])
     return {
@@ -1593,11 +1631,12 @@ def chat(body: ChatRequest = Body(...)) -> Any:
             ),
         },
         "latency_s": round(latency, 3),
+        "cached": cached,
         "retrieval": payload.get("retrieval", {}),
         "timings": payload.get("timings", {}),
         "query_spec": payload.get("query_spec", {}),
         "prompt_chars": payload.get("prompt_chars"),
-        "llm": {"model": LLM.model_name, "load_seconds": LLM.load_seconds,
+        "llm": {"provider": LLM.provider, "model": LLM.model_name, "load_seconds": LLM.load_seconds,
                 "answers_served": LLM.n_answers},
     }
 

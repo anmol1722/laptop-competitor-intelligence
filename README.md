@@ -2,7 +2,7 @@
 
 An end-to-end competitor-intelligence system built from the Amazon Reviews 2023 laptop corpus. It combines structured specification parsing, hybrid competitor matching, price-position analysis, aspect-level review sentiment, and retrieval-augmented question answering in a browser application.
 
-The primary interface is a FastAPI backend with a vanilla JavaScript frontend. The language model is optional: product search, competitor matching, pricing, and review analysis work without loading the 7B model.
+The primary interface is a FastAPI backend with a vanilla JavaScript frontend. Chat uses Groq's hosted API by default, so the complete application can run on a CPU server. Product search, competitor matching, pricing, and review analysis also work without chat credentials. The original local NVIDIA model remains available through `LLM_PROVIDER=local`.
 
 ## Highlights
 
@@ -44,7 +44,7 @@ flowchart LR
     E --> I[RAG retrieval]
     F --> I
     G --> I
-    I --> J[Optional local 7B LLM]
+    I --> J[Groq API or optional local LLM]
     J --> H
     H --> K[Vanilla JS frontend]
 ```
@@ -70,12 +70,18 @@ project_final/
 │   ├── pricing.py              # Coverage-aware price analysis
 │   ├── sentiment.py            # Review and aspect sentiment
 │   ├── rag.py                  # Retrieval, generation, citations, and audit
+│   ├── hosted_llm.py           # Groq generation and sanitized provider errors
 │   ├── app.py                  # Superseded Streamlit interface
 │   └── web/
 │       ├── api.py              # FastAPI backend and static-file server
 │       ├── test_api.py         # End-to-end API tests
+│       ├── test_chat.py        # Offline hosted-chat and quota tests
+│       ├── chat_controls.py    # Request limits, cooldown, and answer cache
 │       └── static/             # HTML, CSS, and JavaScript frontend
 ├── requirements.txt
+├── requirements-web.txt       # CPU deployment dependencies
+├── .env.example               # Chat settings; keep the real .env private
+├── Dockerfile                 # CPU deployment, with processed data included
 └── README.md
 ```
 
@@ -84,9 +90,10 @@ project_final/
 - Python 3.12 is recommended.
 - Approximately 1 GB of free disk space for the included and generated data artifacts.
 - An internet connection is needed only when downloading the dataset or model weights.
-- NVIDIA CUDA is required only for generated RAG answers.
+- A Groq API key is needed for hosted chat.
+- NVIDIA CUDA is needed only when selecting the optional local language model.
 
-The normal dashboard works on macOS, Linux, and CPU-only systems. The current generated-chat implementation is designed for an NVIDIA GPU and checks `nvidia-smi` before loading the model.
+The dashboard and hosted chat work on macOS, Linux, and CPU-only systems. MiniLM still runs locally on the CPU to retrieve evidence. Its weights download on the first retrieval question, so that question can take longer. The 7B model is never downloaded in Groq mode.
 
 ## Local setup
 
@@ -96,32 +103,32 @@ From the repository root:
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
 ```
 
-The web layer has three direct dependencies that are not currently declared in `requirements.txt`. Install them as well:
+On Linux, install CPU PyTorch first to avoid downloading CUDA libraries:
 
 ```bash
-python -m pip install fastapi "uvicorn[standard]" httpx
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-### Dashboard-only installation
-
-If you do not need to rebuild sentiment models or run generated chat, install the smaller web-oriented environment:
+Install the web application and CPU retrieval dependencies (on macOS, PyTorch is installed automatically):
 
 ```bash
-python -m pip install \
-  pandas numpy pyarrow scipy scikit-learn sentence-transformers \
-  requests tqdm fastapi "uvicorn[standard]" httpx
+python -m pip install -r requirements-web.txt
 ```
+
+The full training/pipeline environment, including the optional NVIDIA language model dependencies and legacy Streamlit app, is in `requirements.txt`.
 
 ## Run the application
 
-Start the FastAPI server from the repository root:
+Copy the settings template once, then edit `.env` and set `GROQ_API_KEY` to a key from <https://console.groq.com/keys>. Keep your Groq account on the Free tier for a free demo. The key stays on the server; visitors do not need keys.
 
 ```bash
-python -m src.web.api
+cp .env.example .env
+python -m uvicorn src.web.api:app --env-file .env --host 127.0.0.1 --port 8000
 ```
+
+Preserve an existing `.env` when updating the application. Uvicorn's `--env-file` loads these settings; `python -m src.web.api` and the RAG CLI instead expect exported environment variables. Restart the server after changing chat settings. Without a key, the dashboard remains available and chat reports that it has not been configured.
 
 Open:
 
@@ -132,7 +139,7 @@ Open:
 Development mode with automatic reload:
 
 ```bash
-python -m src.web.api --reload
+python -m uvicorn src.web.api:app --env-file .env --reload
 ```
 
 ## API endpoints
@@ -156,9 +163,10 @@ Run the end-to-end API suite without loading the LLM:
 
 ```bash
 python src/web/test_api.py
+python -m unittest discover -s src/web -p 'test_chat.py' -v
 ```
 
-The suite exercises the product, competitor, review, segment, brand, market, and chat-status endpoints. It also verifies that API responses contain valid JSON and never expose `NaN` or infinite values to the browser.
+The API suite exercises product, competitor, review, segment, brand, market, and chat-status endpoints, including JSON validity. The chat tests mock only retrieval and the external HTTP service to check the real prompt, generation adapter, citation audit, cache, request limits, GPU bypass, and sanitized failures without using provider quota.
 
 Additional checks:
 
@@ -171,6 +179,26 @@ python src/rag.py -q 'Which gaming laptops under $1200 are good?' --retrieval-on
 
 ## Optional RAG generation
 
+### Hosted chat on a CPU server
+
+The default configuration is:
+
+```dotenv
+LLM_PROVIDER=groq
+GROQ_API_KEY=your-private-key
+GROQ_MODEL=openai/gpt-oss-120b
+```
+
+`src/hosted_llm.py` sends the existing evidence-grounded messages to Groq's HTTPS chat endpoint. The same RAG audit still checks citations and figures after generation. GPT-OSS uses low reasoning effort with reasoning excluded from the response, and a 1,024-token reasoning reserve in addition to the requested completion budget. No automatic retries or paid-provider fallbacks run in the background.
+
+The model can be changed with `GROQ_MODEL`; choose one available to your account. Consult the current [supported models](https://console.groq.com/docs/models) and [account limits](https://console.groq.com/docs/rate-limits). Free requests and tokens are shared by all visitors. Their questions and selected product/review evidence are sent to Groq.
+
+The public chat endpoint limits each client IP to **3 requests per minute and 20 per hour**, including cached answers. Successful answers are cached for **10 minutes**, up to **128 entries**, with separate keys for provider, model, question and generation settings. A provider HTTP 429 starts a shared cooldown; responses include `Retry-After`, and the retry button waits for that delay. Cached answers can still be served during the cooldown. Timeouts and service failures return structured errors without exposing credentials or raw provider responses.
+
+These controls are in memory and reset on restart. Run **one Uvicorn worker** for this deployment; multiple workers/replicas would need shared rate-limit/cache storage. Behind a reverse proxy, configure Uvicorn to trust forwarding headers only from that proxy's IP so limits apply to visitor IPs. Visitors sharing an IP share the local allowance.
+
+### Optional local NVIDIA model
+
 Retrieval-only mode uses the MiniLM encoder and does not load the 7B language model:
 
 ```bash
@@ -179,7 +207,7 @@ python src/rag.py \
   --retrieval-only
 ```
 
-Full generation uses `unsloth/Qwen2.5-7B-Instruct-bnb-4bit` and requires:
+Local generation uses `unsloth/Qwen2.5-7B-Instruct-bnb-4bit` and requires:
 
 - A working NVIDIA CUDA installation.
 - `nvidia-smi` available on `PATH`.
@@ -187,10 +215,24 @@ Full generation uses `unsloth/Qwen2.5-7B-Instruct-bnb-4bit` and requires:
 - The approximately 5.5 GB model checkpoint in the Hugging Face cache, or internet access for its first download.
 
 ```bash
-python src/rag.py -q 'What are the best-value gaming laptops under $1200?'
+LLM_PROVIDER=local python src/rag.py -q 'What are the best-value gaming laptops under $1200?'
 ```
 
-On a CPU-only system or Apple Silicon Mac, use retrieval-only mode. The rest of the web application remains available if generation cannot start.
+For local web chat, set `LLM_PROVIDER=local` in `.env` and restart Uvicorn. Only this mode checks `nvidia-smi` and loads local generation weights. On CPU-only systems, use hosted chat or retrieval-only mode.
+
+## Deploy with Docker
+
+The image includes the five tracked processed artifacts used by the dashboard and chat. The larger raw corpus and `reviews.parquet` are not needed to serve existing review snippets. It installs CPU PyTorch and the web dependencies without the local 7B model, CUDA libraries, or training tools.
+
+```bash
+docker build -t laptop-intelligence .
+docker run -d --name laptop-intelligence --restart unless-stopped \
+  --env-file .env -p 8000:8000 laptop-intelligence
+```
+
+On an Oracle Always Free Ubuntu VM, install Docker, clone this repository, create the private `.env`, and run the commands above. Allow port 8000 through the cloud and host firewall for initial access, then put a reverse proxy with HTTPS in front for ongoing public use. A host that supplies `PORT` is also supported. The key is injected at runtime; `.dockerignore` excludes environment files from the build context.
+
+Verify `/api/health` and `/api/chat/status`, then ask a catalogue question in the browser. A configured chat status means credentials are present; the first real completion verifies provider access. Hosted chat needs more RAM than the dashboard alone because it loads CPU MiniLM and the lexical index. The container build and first model download require outbound internet access. No deployment or provider account is created automatically by these files.
 
 ## Rebuild the data artifacts
 
@@ -247,7 +289,8 @@ Question parsing and evidence retrieval are deterministic. Product, review, and 
 - Only 30.5% of listings contain a price, so price conclusions apply to the priced subset.
 - Product specifications are parsed from noisy marketplace text and may occasionally be incomplete.
 - Aspect detection is cue-based and can miss inflections or misread ambiguous words.
-- The generated-chat path is NVIDIA-specific and unavailable on Apple Silicon without code changes.
+- Hosted chat depends on Groq availability and its shared account quotas; free access does not guarantee unlimited usage.
+- The optional local generation backend requires NVIDIA CUDA.
 - The legacy Streamlit interface in `src/app.py` is retained for reference but is not the recommended application entry point.
 
 ## Data source

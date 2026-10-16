@@ -1498,7 +1498,7 @@
     STATE.chat.llm = st;
     var map = {
       unloaded: ["pill--muted", "model idle"],
-      loading: ["pill--busy", "model loading…"],
+      loading: ["pill--busy", "preparing chat…"],
       ready: ["pill--ok", "model ready"],
       unavailable: ["pill--bad", "model unavailable"]
     };
@@ -1508,36 +1508,26 @@
     pill.title = st.model + (st.load_seconds ? " · loaded in " + st.load_seconds + " s" : "") +
       " · answers served " + st.answers_served;
 
-    var blocked = STATE.chat.busy || st.state === "loading" || st.state === "unavailable";
+    var blocked = STATE.chat.busy || st.accepting_input === false ||
+      st.state === "loading" || st.state === "unavailable";
     input.disabled = blocked;
     send.disabled = blocked;
 
     if (st.state === "loading") {
       notice.hidden = false;
-      notice.innerHTML = '<span class="spinner"></span> <strong>Input disabled:</strong> the ' +
-        esc(st.model) + " weights are being loaded onto the GPU (~30–60 s). " +
-        "It happens once per server process.";
-      hint.textContent = "waiting for the model…";
+      notice.innerHTML = '<span class="spinner"></span> ' + esc(st.hint || "Preparing chat…");
+      hint.textContent = "preparing chat…";
     } else if (st.state === "unavailable") {
       notice.hidden = false;
-      notice.innerHTML = "<strong>Input disabled:</strong> the model could not be loaded — " +
-        esc(st.error || "unknown error") + ". " +
-        (st.gpu && st.gpu.memory_used_mib !== null
-          ? "GPU currently holds " + n(st.gpu.memory_used_mib) + " MiB of " +
-            n(st.gpu.memory_total_mib) + " MiB." : "");
-      hint.textContent = "chat disabled";
+      notice.textContent = st.error || st.hint || "Chat is currently unavailable.";
+      hint.textContent = "chat unavailable";
     } else if (STATE.chat.busy) {
       notice.hidden = false;
-      notice.innerHTML = '<span class="spinner"></span> Generating an answer — one question at a ' +
-        "time on a single GPU.";
+      notice.innerHTML = '<span class="spinner"></span> Finding evidence and preparing your answer.';
       hint.textContent = "thinking…";
     } else if (st.state === "unloaded") {
       notice.hidden = false;
-      notice.innerHTML = "The 7B model is not resident yet: your first question also loads it " +
-        "(~30–60 s), after that answers take about 2–17 s." +
-        (st.gpu && st.gpu.memory_used_mib !== null && !st.gpu.can_load
-          ? " <strong>The GPU is currently busy (" + n(st.gpu.memory_used_mib) +
-            " MiB in use); loading will wait rather than risk an out-of-memory crash.</strong>" : "");
+      notice.textContent = st.hint || "Your first question also prepares the catalogue search.";
       hint.textContent = "Enter to send · Shift+Enter for a new line";
     } else {
       notice.hidden = true;
@@ -1599,9 +1589,7 @@
     var timer = setInterval(function () {
       if (!document.getElementById(id + "-t")) { clearInterval(timer); return; }
       var s = Math.round((Date.now() - t0) / 1000);
-      var phase = (STATE.chat.llm && STATE.chat.llm.state === "ready")
-        ? "Retrieving evidence and generating a grounded answer"
-        : "Loading the model, then generating";
+      var phase = "Finding evidence and preparing your answer";
       label.textContent = phase + "… " + s + " s";
     }, 500);
     return function () { clearInterval(timer); };
@@ -1805,21 +1793,30 @@
       var body = err.body || {};
       var e = body.error || {};
       var extra = "";
-      if (e.code === "gpu_busy" || (body.detail && body.detail.code === "gpu_busy")) {
-        extra = " Another process is holding the GPU; the server refuses to load the 7B model " +
-          "rather than risk an out-of-memory crash. Try again once it frees up.";
-      } else if (err.status === 429) {
-        extra = " Only one answer can be generated at a time on a single GPU.";
+      if (e.code === "provider_rate_limited") {
+        extra = " The chat allowance is shared by everyone using this app.";
       } else if (err.status === 0) {
         extra = " The API is unreachable — check that the server is still running.";
       }
+      var retryDelay = Number(e.retry_after) || 0;
       container.innerHTML = '<div class="msg__bubble"><strong>The answer failed' +
         (err.status ? " (HTTP " + err.status + ")" : "") + ".</strong> " +
         esc(err.message) + esc(extra) +
-        '<div style="margin-top:8px"><button type="button" class="btn btn--sm" ' +
-        'data-retry-q="' + esc(text) + '">Retry this question</button></div></div>';
+        (e.retryable === false ? "" :
+          '<div style="margin-top:8px"><button type="button" class="btn btn--sm" ' +
+          'data-retry-q="' + esc(text) + '">Retry this question</button></div>') + "</div>";
       var rb = $("[data-retry-q]", container);
-      if (rb) rb.addEventListener("click", function () { sendQuestion(text); });
+      if (rb) {
+        rb.addEventListener("click", function () { sendQuestion(text); });
+        if (retryDelay > 0) {
+          rb.disabled = true;
+          rb.textContent = "Retry after " + retryDelay + " seconds";
+          setTimeout(function () {
+            rb.disabled = false;
+            rb.textContent = "Retry this question";
+          }, Math.min(retryDelay, 3600) * 1000);
+        }
+      }
       chatScroll();
     }).then(release, release);
 
