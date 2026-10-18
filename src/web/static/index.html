@@ -6,12 +6,12 @@
 <title>Laptop Competitor Intelligence</title>
 <meta name="description" content="Competitor matching, price positioning and grounded review evidence over 25,841 laptop listings.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%232a78d6'/><rect x='3' y='4' width='10' height='6' rx='1' fill='%23fcfcfb'/><rect x='2' y='11' width='12' height='1.5' rx='.75' fill='%23fcfcfb'/></svg>">
-<link rel="stylesheet" href="styles.css">
-<!-- Plotly is optional. If the CDN is blocked the page still works: every chart has a
-     table view, and the one Plotly-only chart (the scatter) falls back to that table. -->
+<meta name="theme-color" content="#102b3f">
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('lci-theme') === 'dark' ? 'dark' : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }</script>
+<link rel="stylesheet" href="styles.css?v=20261018">
+<link rel="stylesheet" href="portfolio.css?v=20261018">
+<!-- The optional scatter chart library is loaded only when the competitor view opens. -->
 <script>window.__PLOTLY_BLOCKED__ = false;</script>
-<script src="https://cdn.plot.ly/plotly-2.32.0.min.js" charset="utf-8"
-        onerror="window.__PLOTLY_BLOCKED__ = true;"></script>
 </head>
 <body>
 
@@ -23,11 +23,40 @@
       <svg viewBox="0 0 24 24" width="26" height="26"><rect x="3" y="5" width="18" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1.5 18.5h21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M6.5 13.5l3-3.5 2.5 2.5 2.5-4 3 5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
     <div>
-      <h1>Laptop Competitor Intelligence</h1>
-      <p class="topbar__sub">Matching &middot; price positioning &middot; grounded review evidence</p>
+      <a class="brand-name" href="#" aria-label="Laptop Competitor Intelligence home">Laptop Intelligence<span class="brand-dot">.</span></a>
+      <p class="topbar__sub">A research project by Anmol Saluja</p>
     </div>
   </div>
 
+  <nav class="topnav" aria-label="Main navigation">
+    <a href="#main" class="topnav__link">Explore dashboard</a>
+    <button type="button" class="topnav__link" id="aboutOpen">About the project</button>
+    <a class="topnav__link topnav__source" href="https://github.com/anmol1722/laptop-competitor-intelligence" target="_blank" rel="noopener noreferrer">View source <span aria-hidden="true">↗</span></a>
+  </nav>
+  <div class="topbar__status">
+    <button type="button" class="pill pill--muted" id="healthPill" aria-live="polite" title="Refresh connection status">Connecting…</button>
+    <button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch to dark theme" title="Switch theme"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20.4 13.2A8.5 8.5 0 0 1 10.8 3.6 8.5 8.5 0 1 0 20.4 13.2Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button>
+  </div>
+</header>
+
+<section class="introduction" aria-labelledby="introTitle">
+  <div class="hero">
+    <div class="hero__copy">
+      <p class="eyebrow"><span class="eyebrow__line"></span> DATA SCIENCE &amp; MARKET INTELLIGENCE</p>
+      <h1 id="introTitle">From product data <br>to <span>market insight.</span></h1>
+      <p class="hero__description">Discover competing laptops, understand price positioning, and explore what customers actually say. One research workspace, with evidence behind every insight.</p>
+      <div class="hero__actions">
+        <button type="button" class="btn hero__cta" id="startTour">Take a guided tour <span aria-hidden="true">→</span></button>
+        <span class="hero__dataset">Amazon Reviews 2023 <span aria-hidden="true">·</span> Research snapshot</span>
+      </div>
+    </div>
+    <div class="hero__workflow" aria-label="Explore the analysis workflow">
+      <p class="workflow__label">THREE QUESTIONS. ONE WORKSPACE.</p>
+      <button type="button" class="workflow-step" data-explore-tab="competitors"><span class="workflow-step__number">01</span><span><strong>Who really competes?</strong><small>Compare products by text and hardware.</small></span><span class="workflow-step__arrow" aria-hidden="true">↗</span></button>
+      <button type="button" class="workflow-step" data-explore-tab="pricing"><span class="workflow-step__number">02</span><span><strong>Where does the price sit?</strong><small>Benchmark against brands and segments.</small></span><span class="workflow-step__arrow" aria-hidden="true">↗</span></button>
+      <button type="button" class="workflow-step" data-explore-tab="reviews"><span class="workflow-step__number">03</span><span><strong>What do customers think?</strong><small>Read sentiment alongside its source reviews.</small></span><span class="workflow-step__arrow" aria-hidden="true">↗</span></button>
+    </div>
+  </div>
   <div class="statstrip" id="statStrip" aria-live="polite" aria-busy="true">
     <div class="stat stat--skeleton"><span class="sk sk--lg"></span><span class="sk sk--sm"></span></div>
     <div class="stat stat--skeleton"><span class="sk sk--lg"></span><span class="sk sk--sm"></span></div>
@@ -36,27 +65,24 @@
     <div class="stat stat--skeleton"><span class="sk sk--lg"></span><span class="sk sk--sm"></span></div>
   </div>
 
-  <div class="topbar__status">
-    <button type="button" class="pill pill--muted" id="healthPill" aria-live="polite"
-            title="API health — click to refresh">checking API…</button>
-  </div>
-</header>
+</section>
 
 <main class="layout" id="main">
 
   <!-- ============================ LEFT: SEARCH ============================ -->
-  <aside class="col col--search" aria-label="Product search">
+  <aside class="col col--search" id="catalogue" aria-label="Product search">
     <section class="card card--flush">
       <header class="card__head">
-        <h2>Find a product</h2>
+        <div><p class="section-kicker">THE CATALOGUE</p><h2>Find your starting point</h2></div>
         <button type="button" class="btn btn--ghost btn--sm" id="resetFilters">Reset</button>
       </header>
 
+      <div class="search-presets" aria-label="Example searches"><button type="button" class="preset" data-preset="gaming">Gaming</button><button type="button" class="preset" data-preset="business">Business</button><button type="button" class="preset" data-preset="ultrabook">Ultrabooks</button></div>
       <form class="filters" id="searchForm" autocomplete="off">
         <label class="fld fld--full">
-          <span class="fld__label">Search text</span>
+          <span class="fld__label">Search the catalogue</span>
           <input type="search" id="fQ" name="q" placeholder="e.g. thinkpad t14, rtx 4060, macbook air"
-                 maxlength="200">
+                 maxlength="200" aria-label="Search laptop names, brands or specifications">
         </label>
 
         <label class="fld">
@@ -80,6 +106,9 @@
           <input type="number" id="fMaxPrice" min="0" max="100000" step="10" placeholder="—">
         </label>
 
+        <details class="advanced-filters fld--full" id="advancedFilters">
+          <summary>More filters <span>RAM, graphics &amp; review evidence</span></summary>
+          <div class="advanced-filters__body">
         <label class="fld">
           <span class="fld__label">Min RAM</span>
           <select id="fRam">
@@ -103,13 +132,15 @@
 
         <label class="fld fld--full fld--row">
           <input type="checkbox" id="fSent">
-          <span>Only products with mined review sentiment <em class="muted">(26.5% of catalogue)</em></span>
+          <span>Only products with review evidence <em class="muted" id="sentimentCoverage"></em></span>
         </label>
 
         <label class="fld fld--full fld--row">
           <input type="checkbox" id="fRenewedOut">
           <span>Exclude renewed / refurbished listings</span>
         </label>
+          </div>
+        </details>
 
         <label class="fld fld--full">
           <span class="fld__label">Sort</span>
@@ -125,7 +156,7 @@
         </label>
 
         <div class="filters__actions">
-          <button type="submit" class="btn btn--primary btn--block">Search</button>
+          <button type="submit" class="btn btn--primary btn--block">Find laptops <span aria-hidden="true">→</span></button>
         </div>
       </form>
 
@@ -138,19 +169,24 @@
 
   <!-- ============================ CENTRE: TABS ============================ -->
   <section class="col col--main" aria-label="Analysis">
-    <div class="focusbar" id="focusBar">
+    <div class="workspace-head"><div><p class="section-kicker">EXPLORE THE RESEARCH</p><h2 id="workspaceTitle">The market at a glance</h2><p id="workspaceSubtitle">Start with the big picture, then explore a product in detail.</p></div><span class="snapshot-label">2023 dataset</span></div>
+    <div class="tour-guide" id="tourGuide" hidden aria-live="polite"><div><p class="section-kicker" id="tourProgress"></p><strong id="tourTitle"></strong><p id="tourDescription"></p></div><div class="tour-guide__actions"><button type="button" class="btn btn--sm" id="tourNext">Next step →</button><button type="button" class="icon-button" id="tourClose" aria-label="Close guided tour">×</button></div></div>
+    <nav class="mobile-tools" aria-label="Workspace shortcuts"><a href="#catalogue">Browse products ↗</a><a href="#analyst">Ask the analyst ↗</a></nav>
+    <div class="focusbar" id="focusBar" hidden>
       <div class="focusbar__empty">No focus product selected — search on the left and pick a listing.</div>
     </div>
 
     <div class="tabs" role="tablist" aria-label="Analysis views">
-      <button role="tab" class="tab is-active" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Overview</button>
-      <button role="tab" class="tab" id="tab-competitors" aria-controls="panel-competitors" aria-selected="false" data-tab="competitors">Competitors</button>
-      <button role="tab" class="tab" id="tab-pricing" aria-controls="panel-pricing" aria-selected="false" data-tab="pricing">Pricing</button>
-      <button role="tab" class="tab" id="tab-reviews" aria-controls="panel-reviews" aria-selected="false" data-tab="reviews">Reviews</button>
+      <button role="tab" class="tab is-active" id="tab-market" aria-controls="panel-market" aria-selected="true" data-tab="market">Market overview</button>
+      <button role="tab" class="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="false" data-tab="overview" tabindex="-1">Product</button>
+      <button role="tab" class="tab" id="tab-competitors" aria-controls="panel-competitors" aria-selected="false" data-tab="competitors" tabindex="-1">Competitors</button>
+      <button role="tab" class="tab" id="tab-pricing" aria-controls="panel-pricing" aria-selected="false" data-tab="pricing" tabindex="-1">Pricing</button>
+      <button role="tab" class="tab" id="tab-reviews" aria-controls="panel-reviews" aria-selected="false" data-tab="reviews" tabindex="-1">Reviews</button>
     </div>
 
     <div class="panels">
-      <div class="panel is-active" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"></div>
+      <div class="panel is-active" role="tabpanel" id="panel-market" aria-labelledby="tab-market"></div>
+      <div class="panel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" hidden></div>
       <div class="panel" role="tabpanel" id="panel-competitors" aria-labelledby="tab-competitors" hidden></div>
       <div class="panel" role="tabpanel" id="panel-pricing" aria-labelledby="tab-pricing" hidden></div>
       <div class="panel" role="tabpanel" id="panel-reviews" aria-labelledby="tab-reviews" hidden></div>
@@ -158,28 +194,28 @@
   </section>
 
   <!-- ============================ RIGHT: CHAT ============================ -->
-  <aside class="col col--chat" aria-label="Evidence-grounded assistant">
+  <aside class="col col--chat" id="analyst" aria-label="Evidence-grounded assistant">
     <section class="card card--chat">
       <header class="card__head card__head--chat">
         <div>
-          <h2>Ask the analyst</h2>
-          <p class="card__sub">Answers are generated only from retrieved catalogue evidence, then audited.</p>
+          <p class="section-kicker">A QUESTION WORTH ASKING</p><h2>Ask the analyst</h2>
+          <p class="card__sub">Explore the data through conversation.</p>
         </div>
-        <span class="pill pill--muted" id="llmPill">checking model…</span>
+        <span class="pill pill--muted" id="llmPill">Connecting…</span>
       </header>
 
       <div class="chat__log" id="chatLog" aria-live="polite">
         <div class="chat__intro">
-          <p><strong>Every answer ships with its evidence.</strong> Citation markers such as
-             <code>[P1]</code> (product), <code>[R1]</code> (review) and <code>[S1]</code> (market statistic)
-             are clickable — they open the exact record the model was shown.</p>
-          <p>An audit runs on each answer: invented citation markers, numbers that appear in no
-             evidence block, and reviews attributed to the wrong product are all reported.</p>
+          <div class="assistant-mark" aria-hidden="true">✳</div>
+          <h3>Curiosity, backed by evidence.</h3>
+          <p>Ask about products, prices or customer opinions. Open the citations to see the records behind an answer, and its audit to check unsupported claims.</p>
+          <p class="chat__suggestion-label">TRY A QUESTION</p>
           <div class="chat__suggestions" id="chatSuggestions">
             <button type="button" class="chip" data-q="What is the best gaming laptop under $1200?">Best gaming laptop under $1200?</button>
             <button type="button" class="chip" data-q="How do Lenovo and HP business laptops compare on price?">Lenovo vs HP on price</button>
             <button type="button" class="chip" data-q="What do reviewers complain about most in budget laptops?">Top complaints in budget laptops</button>
           </div>
+          <p class="chat__timing">Answers may take about a minute. The first question can take longer.</p>
         </div>
       </div>
 
@@ -198,8 +234,19 @@
   </aside>
 </main>
 
+<footer class="site-footer"><span>Laptop Competitor Intelligence <span aria-hidden="true">/</span> Anmol Saluja</span><span>Amazon Reviews 2023 · Listed prices in USD · Historical data, not live retail quotes</span></footer>
+
+<dialog class="project-dialog" id="projectDialog" aria-labelledby="projectTitle">
+  <div class="project-dialog__head"><p class="section-kicker">BEHIND THE PROJECT</p><button type="button" class="icon-button" id="aboutClose" aria-label="Close project information" autofocus>×</button></div>
+  <h2 id="projectTitle">Product data becomes<br>a decision-making tool.</h2>
+  <p class="project-dialog__intro">An end-to-end research project by Anmol Saluja, built to connect competitor matching, price analysis and customer review evidence in a single interactive application.</p>
+  <div class="method-steps"><div><span>01</span><h3>Structure the catalogue</h3><p>Clean and de-duplicate source listings, parse hardware specifications and organize products into market segments.</p></div><div><span>02</span><h3>Make meaningful comparisons</h3><p>Combine text embeddings and hardware similarity. Apply segment and price guards to keep competitor matches relevant.</p></div><div><span>03</span><h3>Make findings inspectable</h3><p>Show price coverage, analyse review aspects, and link generated answers to retrieved evidence with automated checks.</p></div></div>
+  <div class="project-dialog__caveat"><strong>Read the results in context.</strong> This is a research snapshot of Amazon Reviews 2023, not a live shopping feed. Price statistics use listings with known prices; each chart reports its sample and coverage. Missing values stay unknown. Automated answer audits help identify errors, but do not guarantee that every answer is correct.</div>
+  <div class="project-dialog__foot"><span>Python · FastAPI · MiniLM · Groq · JavaScript</span><a href="https://github.com/anmol1722/laptop-competitor-intelligence" target="_blank" rel="noopener noreferrer">Explore the source ↗</a></div>
+</dialog>
+
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="app.js"></script>
+<script src="app.js?v=20261018"></script>
 </body>
 </html>

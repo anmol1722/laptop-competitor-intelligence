@@ -17,7 +17,7 @@ already do the analysis; this layer does three things and nothing else:
 Honesty rules baked into the responses (these are data realities, not bugs):
   * ~69% of products have no price.  Those come back as ``price: null`` with
     ``price_available: false`` and the display string "price not listed" - never 0.
-  * Only ~26.5% of products have mined review sentiment.  Those come back with
+  * Products without mined review sentiment come back with
     ``no_sentiment_data: true`` and a reason, never an empty/zero chart.
   * Every market statistic carries ``n`` and ``coverage``; brand/segment rows keep
     the ``reliable`` flag (n < 5 priced products) from ``pricing.py``.
@@ -523,9 +523,9 @@ def _market_overview() -> dict[str, Any]:
             "n_reviews_scored": STATE.n_review_sentiment,
             "n_reviews_available": STATE.n_reviews_total,
             "note": (
-                "Review sentiment has been mined for a sample of the catalogue; a full "
-                "pass is queued. Products outside the sample report no_sentiment_data "
-                "rather than a zeroed chart."
+                "Sentiment coverage is computed from the loaded review artifacts. "
+                "Products without review evidence report no_sentiment_data rather "
+                "than a zeroed chart."
             ),
         },
         "segments": [
@@ -553,7 +553,7 @@ def _market_overview() -> dict[str, Any]:
             f"price in the source data; every price statistic here describes the "
             f"{price_all['n']:,} priced listings only.",
             f"Review sentiment exists for {len(STATE.sentiment_asins):,} of {n:,} "
-            f"products ({100.0 * len(STATE.sentiment_asins) / n if n else 0:.1f}%).",
+            f"products ({100.0 * len(STATE.sentiment_asins) / n if n else 0:.2f}%).",
             f"Groups with fewer than {pricing.MIN_RELIABLE_N} priced products are "
             f"flagged unreliable and their medians should not be quoted.",
         ],
@@ -823,7 +823,7 @@ def health() -> dict[str, Any]:
                 "n_with_sentiment": len(st.sentiment_asins),
                 "n_total": n,
                 "coverage": (len(st.sentiment_asins) / n) if n else 0.0,
-                "note": "a full sentiment pass is queued; uncovered products say so",
+                "note": "coverage reflects loaded review artifacts; uncovered products say so",
             },
         },
         "caches": {
@@ -1038,8 +1038,8 @@ def _sentiment_block(asin: str) -> tuple[dict[str, Any] | None, bool, str | None
         return None, True, (
             "No mined review sentiment for this product yet. Only "
             f"{len(STATE.sentiment_asins):,} of {STATE.n:,} products "
-            f"({100.0 * len(STATE.sentiment_asins) / STATE.n if STATE.n else 0:.1f}%) "
-            "have been scored; a full pass is queued."
+            f"({100.0 * len(STATE.sentiment_asins) / STATE.n if STATE.n else 0:.2f}%) "
+            "have review sentiment in this research snapshot."
         )
     return sent, False, None
 

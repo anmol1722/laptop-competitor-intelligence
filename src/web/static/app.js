@@ -165,10 +165,12 @@
     brands: null,
     focusAsin: null,
     detail: null,
-    search: { params: null, items: [], total: 0, offset: 0 },
+    search: { params: null, items: [], total: 0, offset: 0, requestId: 0 },
     competitors: { guarded: null, unguarded: null, k: 12 },
     reviews: null,
-    activeTab: "overview",
+    activeTab: "market",
+    overviewError: null,
+    tourStep: -1,
     loaded: { overview: false, competitors: false, pricing: false, reviews: false },
     chat: { msgSeq: 0, busy: false, llm: null, pollTimer: null }
   };
@@ -200,37 +202,34 @@
     }
     var c = ov.catalogue, p = ov.price, s = ov.sentiment;
     el.innerHTML = [
-      statTile('<span class="num">' + n(c.n_products) + "</span>", "laptops",
-        "distinct listings in products.parquet"),
-      statTile('<span class="num">' + n(c.n_brands) + "</span>", "brands",
-        "across " + n(c.n_segments) + " segments"),
+      statTile('<span class="num">' + n(c.n_products) + "</span>", "laptop listings",
+        n(c.n_brands) + " brands · " + n(c.n_segments) + " segments"),
       statTile('<span class="num">' + n(s.n_reviews_scored) + "</span>", "reviews analysed",
-        "of " + n(s.n_reviews_available) + " retained (" +
-        pct(s.n_reviews_scored / (s.n_reviews_available || 1), 1) + ")"),
+        n(s.n_products_with_sentiment) + " products with review evidence"),
+      statTile('<span class="num">' + (money(p.median, 0) || "—") + "</span>", "median listed price",
+        "From " + n(p.n_priced) + " priced listings · USD"),
       statTile('<span class="num">' + pct(p.coverage, 1) + "</span>", "price coverage",
         n(p.n_priced) + " of " + n(p.n_total) + " listings priced"),
-      statTile('<span class="num">' + pct(s.coverage, 1) + "</span>", "sentiment coverage",
-        n(s.n_products_with_sentiment) + " of " + n(s.n_products) + " products mined")
+      statTile('<span class="num">' + pct(s.coverage, 2) + "</span>", "sentiment coverage",
+        n(s.n_products_with_sentiment) + " of " + n(s.n_products) + " products")
     ].join("");
+    $("#sentimentCoverage").textContent = "(" + pct(s.coverage, 2) + " of catalogue)";
   }
 
   function renderHealthPill(h, err) {
     var pill = $("#healthPill");
     if (err) {
       pill.className = "pill pill--bad";
-      pill.innerHTML = '<span class="pill__dot"></span>API unreachable';
+      pill.innerHTML = '<span class="pill__dot"></span>Disconnected';
       pill.title = err.message;
       return;
     }
     var caches = (h.caches && h.caches.state) || "unknown";
     var ok = h.status === "ok";
     pill.className = "pill " + (ok ? (caches === "warm" ? "pill--ok" : "pill--busy") : "pill--warn");
-    pill.innerHTML = '<span class="pill__dot"></span>API ' + esc(h.status) +
-      " &middot; caches " + esc(caches);
-    pill.title = "products " + n(h.rows.products) + " · reviews " + n(h.rows.reviews) +
-      " · product_sentiment " + n(h.rows.product_sentiment) +
-      "\nstartup " + (h.startup_load_s === null ? "?" : Number(h.startup_load_s).toFixed(2)) + " s" +
-      "\nclick to refresh";
+    pill.innerHTML = '<span class="pill__dot"></span>' +
+      (ok ? (caches === "warm" ? "Connected" : "Preparing data") : "Partial data");
+    pill.title = n(h.rows.products) + " catalogue listings available. Click to refresh connection status.";
   }
 
   function loadHealth() {
@@ -246,11 +245,15 @@
   function loadOverview() {
     return api("/api/market/overview").then(function (ov) {
       STATE.overview = ov;
+      STATE.overviewError = null;
       renderStatStrip();
+      if (STATE.activeTab === "market") renderMarketTab();
       return ov;
     }, function (err) {
       STATE.overview = null;
+      STATE.overviewError = err;
       renderStatStrip();
+      if (STATE.activeTab === "market") renderMarketTab();
       toast("Market overview failed to load: " + err.message);
       throw err;
     });
@@ -289,6 +292,8 @@
     return '<button type="button" class="result' +
       (item.parent_asin === STATE.focusAsin ? " is-focus" : "") +
       '" data-asin="' + esc(item.parent_asin) + '">' +
+      '<div class="result__eyebrow"><span class="result__initial">' + esc(item.brand) +
+      '</span><span>' + esc(item.segment) + '</span></div>' +
       '<div class="result__title">' + esc(item.title) + "</div>" +
       '<div class="result__meta">' +
       '<span class="result__price' + (item.price_available ? "" : " is-missing") + '">' +
@@ -320,22 +325,27 @@
 
   function runSearch(append) {
     var box = $("#results");
-    var params = append ? STATE.search.params : readFilters();
+    var params = append ? Object.assign({}, STATE.search.params) : readFilters();
+    var requestId = ++STATE.search.requestId;
     var offset = append ? STATE.search.items.length : 0;
     params.offset = offset;
     STATE.search.params = params;
 
     if (params.min_price !== null && params.max_price !== null && params.min_price > params.max_price) {
       box.innerHTML = errorHTML({ message: "Minimum price is above the maximum price.", status: 0 });
+      box.setAttribute("aria-busy", "false");
+      $("#loadMore").disabled = false;
+      $("#loadMore").hidden = true;
       $("#searchMeta").textContent = "";
-      return;
+      return Promise.resolve(null);
     }
 
     box.setAttribute("aria-busy", "true");
     if (!append) box.innerHTML = loadingHTML("Searching the catalogue…");
     $("#loadMore").disabled = true;
 
-    api("/api/products/search" + qs(params)).then(function (data) {
+    return api("/api/products/search" + qs(params)).then(function (data) {
+      if (requestId !== STATE.search.requestId) return null;
       box.setAttribute("aria-busy", "false");
       $("#loadMore").disabled = false;
       STATE.search.total = data.total;
@@ -346,8 +356,7 @@
       $("#searchMeta").innerHTML =
         "<span><strong>" + n(data.total) + "</strong> of " + n(data.coverage.catalogue_size) +
         " listings match</span>" +
-        "<span>" + pct(data.coverage.price_coverage_in_result, 0) + " priced &middot; " +
-        n(data.took_ms, 0) + " ms</span>";
+        "<span>" + pct(data.coverage.price_coverage_in_result, 0) + " with listed prices</span>";
 
       var notes = (data.notes || []).slice();
       if (data.query.sort !== data.query.effective_sort) {
@@ -361,13 +370,16 @@
         nb.hidden = true;
         nb.innerHTML = "";
       }
+      return data;
     }, function (err) {
+      if (requestId !== STATE.search.requestId) return null;
       box.setAttribute("aria-busy", "false");
       $("#loadMore").disabled = false;
       box.innerHTML = errorHTML(err, "retrySearch");
       var r = $("#retrySearch");
       if (r) r.addEventListener("click", function () { runSearch(false); });
       $("#searchMeta").textContent = "";
+      return null;
     });
   }
 
@@ -379,6 +391,7 @@
         return b.n_products - a.n_products;
       });
       rows.forEach(function (r) {
+        if (Array.prototype.some.call(sel.options, function (o) { return o.value === r.segment; })) return;
         var o = document.createElement("option");
         o.value = r.segment;
         o.textContent = r.segment + " (" + n(r.n_products) + ")";
@@ -404,6 +417,7 @@
 
   function renderFocusBar() {
     var bar = $("#focusBar");
+    bar.hidden = STATE.activeTab === "market";
     var d = STATE.detail;
     if (!STATE.focusAsin) {
       bar.innerHTML = '<div class="focusbar__empty">No focus product selected — search on the ' +
@@ -417,7 +431,9 @@
     }
     var pos = d.price_position || {};
     var seg = pos.vs_segment || {};
-    bar.innerHTML = '<div class="focusbar__row">' +
+    bar.innerHTML = '<div class="focusbar__label"><p class="section-kicker">SELECTED PRODUCT</p>' +
+      '<button type="button" class="focusbar__share" data-copy-product>Copy link ↗</button></div>' +
+      '<div class="focusbar__row">' +
       '<div class="focusbar__title">' + esc(truncate(d.title, 130)) +
       '<div class="muted" style="font-weight:400;font-size:11.5px;margin-top:2px">' +
       esc(d.brand) + " &middot; " + esc(d.segment) + " &middot; " + esc(d.parent_asin) +
@@ -441,6 +457,7 @@
   function setFocus(asin) {
     if (!asin) return;
     STATE.focusAsin = asin;
+    updateProductLocation();
     STATE.detail = null;
     STATE.competitors = { guarded: null, unguarded: null, k: STATE.competitors.k };
     STATE.reviews = null;
@@ -471,28 +488,157 @@
   }
 
   function activateTab(name) {
+    if (["market", "overview", "competitors", "pricing", "reviews"].indexOf(name) === -1) return;
     STATE.activeTab = name;
     $$(".tab").forEach(function (t) {
       var on = t.getAttribute("data-tab") === name;
       t.classList.toggle("is-active", on);
       t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
     });
     $$(".panel").forEach(function (p) {
       var on = p.id === "panel-" + name;
       p.classList.toggle("is-active", on);
       p.hidden = !on;
     });
+    var descriptions = {
+      market: ["The market at a glance", "Start with the big picture, then explore a product in detail."],
+      overview: ["Inside the product", "Specifications, customer sentiment and its position among peers."],
+      competitors: ["Find the closest alternatives", "Compare similar products and inspect how the matching rules help."],
+      pricing: ["Understand the price landscape", "Compare brands and segments using listed prices and sample coverage."],
+      reviews: ["Listen to the customer", "Explore what customers praise and question, with the original reviews."]
+    };
+    $("#workspaceTitle").textContent = descriptions[name][0];
+    $("#workspaceSubtitle").textContent = descriptions[name][1];
+    renderFocusBar();
+    updateProductLocation();
     renderTab(name, false);
   }
 
   function renderTab(name, force) {
-    if (name === "overview") renderOverviewTab();
+    if (name === "market") renderMarketTab();
+    else if (name === "overview") renderOverviewTab();
     else if (name === "competitors") renderCompetitorsTab(force);
     else if (name === "pricing") renderPricingTab(force);
     else if (name === "reviews") renderReviewsTab(force);
   }
 
   var NEED_FOCUS = "Select a product from the search results on the left to populate this view.";
+
+  function renderMarketTab() {
+    var el = $("#panel-market"), ov = STATE.overview;
+    if (!ov) {
+      el.innerHTML = STATE.overviewError ? errorHTML(STATE.overviewError, "retryMarket") : loadingHTML("Preparing the market overview…");
+      var retry = $("#retryMarket");
+      if (retry) retry.addEventListener("click", function () { loadOverview().catch(function () {}); });
+      return;
+    }
+    var segments = (ov.segments || []).slice().sort(function (a, b) { return (b.median || 0) - (a.median || 0); });
+    var reliable = segments.filter(function (s) { return s.reliable && !isMissing(s.median); });
+    var leading = reliable[0];
+    var segmentRows = segments.map(function (s) {
+      return { label: s.segment, value: s.median, valueLabel: money(s.median, 0) || "—", unreliable: !s.reliable,
+        sub: n(s.n_priced) + " priced · " + pct(s.coverage, 0) + " coverage",
+        tip: s.segment + ": " + n(s.n_priced) + " priced of " + n(s.n_products) + " listings" };
+    });
+    var brands = (ov.top_brands || []).slice().sort(function (a, b) { return b.n_products - a.n_products; }).slice(0, 6);
+    var brandRows = brands.map(function (b) {
+      return { label: b.brand, value: b.n_products, valueLabel: n(b.n_products),
+        sub: pct(b.n_products / ov.catalogue.n_products, 1) + " of the catalogue",
+        tip: b.brand + ": " + n(b.n_products) + " listings in this dataset" };
+    });
+    el.innerHTML =
+      '<div class="market-brief"><div><p class="section-kicker">A STARTING INSIGHT</p>' +
+      '<h3>Different segments. Different benchmarks.</h3><p>' +
+      (leading ? esc(leading.segment.charAt(0).toUpperCase() + leading.segment.slice(1)) +
+        ' has a median listed price of <strong>' + esc(money(leading.median, 0)) +
+        '</strong> across ' + n(leading.n_priced) + ' priced listings. Compare it with the other segments below.' :
+        'Explore how listed prices differ across product segments.') +
+      '</p></div><div class="market-brief__number">' + n(ov.catalogue.n_segments) + '<small>market segments</small></div></div>' +
+      '<div class="grid-2"><section class="card market-chart"><header class="card__head"><div><p class="section-kicker">PRICE LANDSCAPE</p>' +
+      '<h3>Median price by segment</h3></div><span class="snapshot-label">USD</span></header><div class="card__body">' +
+      hbarsHTML(segmentRows, { labelWidth: 77 }) + '</div><div class="card__foot">Priced listings only. Each row shows its sample size and coverage. Faint bars indicate fewer than 5 priced listings.</div></section>' +
+      '<section class="card market-chart market-chart--brands"><header class="card__head"><div><p class="section-kicker">CATALOGUE LANDSCAPE</p>' +
+      '<h3>Largest brands in the dataset</h3></div></header><div class="card__body">' + hbarsHTML(brandRows, { labelWidth: 77 }) +
+      '</div><div class="card__foot">Listing counts in this research dataset, not sales volume or real-world market share.</div></section></div>' +
+      '<div class="market-note"><span class="market-note__icon" aria-hidden="true">i</span><span><strong>Coverage is part of the story.</strong> Only ' +
+      pct(ov.price.coverage, 1) + ' of listings have a price (' + n(ov.price.n_priced) + ' of ' + n(ov.price.n_total) +
+      '). Price comparisons describe that subset; an unavailable price is never treated as $0.</span></div>' +
+      '<div class="market-actions"><button type="button" class="market-action" data-explore-tab="competitors"><span class="market-action__icon" aria-hidden="true">⇄</span>' +
+      '<span><strong>Find relevant competitors</strong><small>See the matching model in action.</small></span><span aria-hidden="true">→</span></button>' +
+      '<button type="button" class="market-action" data-explore-tab="reviews"><span class="market-action__icon" aria-hidden="true">≋</span>' +
+      '<span><strong>Go beyond the star rating</strong><small>Explore opinions and source reviews.</small></span><span aria-hidden="true">→</span></button></div>';
+  }
+
+  function updateProductLocation() {
+    var hash = STATE.activeTab !== "market" && STATE.focusAsin ?
+      "#product=" + encodeURIComponent(STATE.focusAsin) + "&view=" + STATE.activeTab : "";
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search + hash); } catch (e) { /* embedded browser */ }
+  }
+
+  function scrollToWorkspace() {
+    $(".col--main").scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  }
+
+  function applyPreset(name) {
+    var presets = {
+      gaming: { segment: "gaming", maxPrice: "1200", minRam: "8" },
+      business: { segment: "business", maxPrice: "1000", minRam: "8" },
+      ultrabook: { segment: "ultrabook", maxPrice: "1500", minRam: "8" }
+    };
+    var preset = presets[name];
+    if (!preset) return Promise.resolve(null);
+    $("#searchForm").reset();
+    var segment = $("#fSegment");
+    if (!Array.prototype.some.call(segment.options, function (o) { return o.value === preset.segment; })) {
+      var option = document.createElement("option"); option.value = preset.segment; option.textContent = preset.segment; segment.appendChild(option);
+    }
+    segment.value = preset.segment;
+    $("#fMaxPrice").value = preset.maxPrice;
+    $("#fRam").value = preset.minRam;
+    $("#fSent").checked = true;
+    $("#fSort").value = "reviews_desc";
+    $$("[data-preset]").forEach(function (b) { b.classList.toggle("is-active", b.getAttribute("data-preset") === name); });
+    return runSearch(false).then(function (data) {
+      if (data && data.items.length) setFocus(data.items[0].parent_asin);
+      return data;
+    });
+  }
+
+  var TOUR_STEPS = [
+    { tab: "competitors", title: "Find products that actually compete", description: "Start with a gaming example. Compare the ranked alternatives, then switch matching guards off to see how relevance changes." },
+    { tab: "pricing", title: "Put a price in context", description: "Compare segment and brand medians. Sample counts and coverage help you judge how much the data supports each comparison." },
+    { tab: "reviews", title: "Read the evidence behind the sentiment", description: "Explore aspect-level opinions, then read the original praise and complaints. The assistant offers another way to explore the same evidence." }
+  ];
+
+  function showTourStep(step) {
+    STATE.tourStep = step;
+    $("#tourGuide").hidden = step < 0;
+    if (step < 0) return;
+    var item = TOUR_STEPS[step];
+    $("#tourProgress").textContent = "GUIDED TOUR · " + (step + 1) + " OF " + TOUR_STEPS.length;
+    $("#tourTitle").textContent = item.title;
+    $("#tourDescription").textContent = item.description;
+    $("#tourNext").textContent = step === TOUR_STEPS.length - 1 ? "Finish tour ✓" : "Next step →";
+    activateTab(item.tab);
+  }
+
+  var plotlyRequest = null;
+  function loadScatterLibrary() {
+    if (PLOTLY_OK()) return Promise.resolve(true);
+    if (window.__PLOTLY_BLOCKED__) return Promise.resolve(false);
+    if (plotlyRequest) return plotlyRequest;
+    plotlyRequest = new Promise(function (resolve) {
+      var script = document.createElement("script");
+      var timer = setTimeout(function () { window.__PLOTLY_BLOCKED__ = true; resolve(false); }, 12000);
+      script.src = "https://cdn.plot.ly/plotly-2.32.0.min.js";
+      script.async = true;
+      script.onload = function () { clearTimeout(timer); window.__PLOTLY_BLOCKED__ = false; resolve(PLOTLY_OK()); };
+      script.onerror = function () { clearTimeout(timer); window.__PLOTLY_BLOCKED__ = true; resolve(false); };
+      document.head.appendChild(script);
+    });
+    return plotlyRequest;
+  }
 
   /* ==================================================================== */
   /* 4. Overview tab — spec card + price position ruler                   */
@@ -652,11 +798,11 @@
           (d.no_sentiment_data ? '<span class="tag">no data</span>' : '<span class="tag tag--sent">mined</span>') +
           "</header>" +
           '<div class="card__body">' + sentBlock + "</div>" +
-          '<div class="card__foot">Only ' +
-          (STATE.overview ? pct(STATE.overview.sentiment.coverage, 1) + " (" +
+          '<div class="card__foot">' +
+          (STATE.overview ? pct(STATE.overview.sentiment.coverage, 2) + " (" +
             n(STATE.overview.sentiment.n_products_with_sentiment) + " of " +
-            n(STATE.overview.sentiment.n_products) + ")" : "26.5%") +
-          " of the catalogue has mined sentiment; a full pass is queued.</div></section>" +
+            n(STATE.overview.sentiment.n_products) + ") of catalogue products have review sentiment in this research snapshot."
+            : "Catalogue coverage is available in the market overview.") + "</div></section>" +
       "</div>" +
 
       '<section class="card"><header class="card__head"><h3>Price position vs its segment' +
@@ -692,7 +838,7 @@
     var asin = STATE.focusAsin;
     var k = STATE.competitors.k;
     var el = $("#panel-competitors");
-    el.innerHTML = loadingHTML("Ranking competitors (matcher warm query ~30 ms)…");
+    el.innerHTML = loadingHTML("Finding relevant competitors…");
 
     var base = "/api/products/" + encodeURIComponent(asin) + "/competitors";
     Promise.all([
@@ -1058,6 +1204,11 @@
     });
 
     drawScatter(active);
+    if (!PLOTLY_OK() && !window.__PLOTLY_BLOCKED__) {
+      loadScatterLibrary().then(function (ready) {
+        if (ready && STATE.activeTab === "competitors" && STATE.focusAsin === q.parent_asin) renderCompetitorsTab(false);
+      });
+    }
   }
 
   /* ==================================================================== */
@@ -1405,7 +1556,7 @@
         n(rv.n_reviews_retained) + "</div></div>" +
         "<div><div class=\"spec__k\">Amazon ratings</div><div class=\"spec__v\">" +
         n(rv.rating_number) + "</div></div>" +
-        "<div><div class=\"spec__k\">reviews scored</div><div class=\"spec__v is-missing\">0 — pass queued</div></div>" +
+        "<div><div class=\"spec__k\">reviews scored</div><div class=\"spec__v is-missing\">No review evidence available</div></div>" +
         "</div></div>" +
         '<div class="card__foot">Rendering a zeroed chart here would imply neutral sentiment. ' +
         "There is no measurement, which is a different thing.</div></section>";
@@ -1497,10 +1648,10 @@
     }
     STATE.chat.llm = st;
     var map = {
-      unloaded: ["pill--muted", "model idle"],
-      loading: ["pill--busy", "preparing chat…"],
-      ready: ["pill--ok", "model ready"],
-      unavailable: ["pill--bad", "model unavailable"]
+      unloaded: ["pill--muted", "Available"],
+      loading: ["pill--busy", "Preparing…"],
+      ready: ["pill--ok", "Ready"],
+      unavailable: ["pill--bad", "Unavailable"]
     };
     var m = map[st.state] || ["pill--muted", st.state];
     pill.className = "pill " + m[0];
@@ -1653,11 +1804,12 @@
   function auditHTML(audit, msgId) {
     var bad = (audit.unsupported_markers || []).length +
       (audit.unverified_numbers || []).length +
-      (audit.misattributed_reviews || []).length;
-    var ok = bad === 0;
+      (audit.misattributed_reviews || []).length +
+      (audit.uncited_sentences || []).length + (audit.truncated ? 1 : 0);
+    var ok = audit.grounded === true && bad === 0;
     var badge = '<button type="button" class="audit-badge audit-badge--' + (ok ? "ok" : "bad") +
       '" data-audit="' + msgId + '" aria-expanded="false">' +
-      (ok ? "✓ grounded" : "⚠ " + n(bad) + " audit flag" + (bad === 1 ? "" : "s")) + "</button>";
+      (ok ? "✓ checks passed" : (bad ? "⚠ " + n(bad) + " audit flag" + (bad === 1 ? "" : "s") : "Review answer")) + "</button>";
 
     var detail = '<div class="audit-detail" id="audit-' + msgId + '" hidden><dl style="margin:0">' +
       "<dt>Invented citation markers (" + n((audit.unsupported_markers || []).length) + ")</dt><dd>" +
@@ -1837,12 +1989,67 @@
   /* ==================================================================== */
 
   function wire() {
+    $(".brand-name").addEventListener("click", function (event) {
+      event.preventDefault();
+      showTourStep(-1);
+      activateTab("market");
+      window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    });
+    $("#themeToggle").addEventListener("click", function () {
+      var theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      try { localStorage.setItem("lci-theme", theme); } catch (e) { /* optional preference storage */ }
+      this.setAttribute("aria-label", "Switch to " + (theme === "dark" ? "light" : "dark") + " theme");
+      if (STATE.activeTab === "competitors" && STATE.competitors.guarded) renderCompetitorsTab(false);
+    });
+    $("#themeToggle").setAttribute("aria-label", "Switch to " + (document.documentElement.dataset.theme === "dark" ? "light" : "dark") + " theme");
+    var projectDialog = $("#projectDialog");
+    $("#aboutOpen").addEventListener("click", function () { projectDialog.showModal(); });
+    $("#aboutClose").addEventListener("click", function () { projectDialog.close(); });
+    projectDialog.addEventListener("click", function (event) {
+      var rect = projectDialog.getBoundingClientRect();
+      if (event.target === projectDialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) projectDialog.close();
+    });
+    document.addEventListener("click", function (event) {
+      var button = event.target.closest ? event.target.closest("[data-explore-tab]") : null;
+      if (button) { activateTab(button.getAttribute("data-explore-tab")); scrollToWorkspace(); }
+    });
+    $$("[data-preset]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        showTourStep(-1);
+        activateTab("overview");
+        applyPreset(button.getAttribute("data-preset")).then(function (data) {
+          if (data && window.matchMedia("(max-width: 860px)").matches) scrollToWorkspace();
+        });
+      });
+    });
+    $("#startTour").addEventListener("click", function () {
+      var button = this;
+      button.disabled = true;
+      applyPreset("gaming").then(function (data) {
+        if (data && data.items.length) { showTourStep(0); scrollToWorkspace(); }
+        else toast("The example could not load. Please try the catalogue search.");
+      }).then(function () { button.disabled = false; }, function () { button.disabled = false; });
+    });
+    $("#tourNext").addEventListener("click", function () {
+      var next = STATE.tourStep + 1;
+      showTourStep(next >= TOUR_STEPS.length ? -1 : next);
+    });
+    $("#tourClose").addEventListener("click", function () { showTourStep(-1); });
+    $("#focusBar").addEventListener("click", function (event) {
+      if (!event.target.closest("[data-copy-product]")) return;
+      updateProductLocation();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(window.location.href).then(function () { toast("Product link copied. Share this exact view."); }, function () { toast("Copy the address from your browser to share this product."); });
+      } else toast("Copy the address from your browser to share this product.");
+    });
     $("#searchForm").addEventListener("submit", function (e) {
       e.preventDefault();
       runSearch(false);
     });
     $("#resetFilters").addEventListener("click", function () {
       $("#searchForm").reset();
+      $$("[data-preset]").forEach(function (b) { b.classList.remove("is-active"); });
       runSearch(false);
     });
     $("#loadMore").addEventListener("click", function () { runSearch(true); });
@@ -1855,11 +2062,23 @@
 
     $("#results").addEventListener("click", function (e) {
       var btn = e.target.closest ? e.target.closest(".result") : null;
-      if (btn) setFocus(btn.getAttribute("data-asin"));
+      if (btn) {
+        setFocus(btn.getAttribute("data-asin")); activateTab("overview");
+        if (window.matchMedia("(max-width: 860px)").matches) scrollToWorkspace();
+      }
     });
 
     $$(".tab").forEach(function (t) {
       t.addEventListener("click", function () { activateTab(t.getAttribute("data-tab")); });
+      t.addEventListener("keydown", function (e) {
+        var tabs = $$(".tab"), index = tabs.indexOf(t), next;
+        if (e.key === "ArrowRight") next = (index + 1) % tabs.length;
+        else if (e.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+        else if (e.key === "Home") next = 0;
+        else if (e.key === "End") next = tabs.length - 1;
+        else return;
+        e.preventDefault(); activateTab(tabs[next].getAttribute("data-tab")); tabs[next].focus();
+      });
     });
 
     $("#healthPill").addEventListener("click", function () { loadHealth().catch(function () { }); });
@@ -1893,10 +2112,19 @@
     loadOverview().catch(function () { });
     pollChatStatus().catch(function () { });
     runSearch(false);
-    renderOverviewTab();
+    renderMarketTab();
+    renderFocusBar();
+
+    var initial = new URLSearchParams(window.location.hash.slice(1));
+    var initialProduct = initial.get("product");
+    if (initialProduct && /^[A-Z0-9]{10}$/.test(initialProduct)) {
+      setFocus(initialProduct);
+      activateTab(initial.get("view") || "overview");
+      return;
+    }
 
     // pick a sensible default focus so the dashboard is never empty on arrival
-    api("/api/products/search" + qs({ sort: "reviews_desc", has_sentiment: "true", limit: 1 }))
+    api("/api/products/search" + qs({ segment: "gaming", min_price: 500, max_price: 2000, sort: "reviews_desc", has_sentiment: "true", limit: 1 }))
       .then(function (d) {
         if (d.items && d.items.length && !STATE.focusAsin) setFocus(d.items[0].parent_asin);
       }, function () { /* the empty-state copy already covers this */ });

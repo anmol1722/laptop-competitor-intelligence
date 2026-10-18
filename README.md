@@ -14,6 +14,10 @@ The primary interface is a FastAPI backend with a vanilla JavaScript frontend. C
 - View customer-review evidence behind sentiment results.
 - Ask catalogue questions through a grounded RAG agent with citations and a post-generation audit.
 - Preserve missing-data honesty: an unavailable price is never represented as `$0`.
+- Start with a market overview or take a three-step tour through competitors, pricing, and review evidence.
+- Share a selected product and analysis tab with a direct link, and switch between light and dark themes.
+
+The interface introduces the research for portfolio visitors, with an About project panel covering the method, stack, and limitations. It adapts to phones and supports keyboard navigation between analysis tabs. Prices come from the archived research dataset; they are not current retail quotes.
 
 ## Dataset snapshot
 
