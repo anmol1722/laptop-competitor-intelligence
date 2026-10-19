@@ -75,10 +75,10 @@
     chart.rows.forEach(function(r){lines.push(columns.map(function(c){return r[c];}));});
     download(new Blob(['\uFEFF'+lines.map(function(row){return row.map(cell).join(',');}).join('\r\n')],{type:'text/csv;charset=utf-8'}),'laptop-analysis.csv');
   }
-  function mountOne(host,chart,expanded) {
+  function mountOne(host,chart,expanded,options) {
     var id='assistant-chart-'+(++serial);
     host.className='chat-chart';
-    host.innerHTML='<div class="chat-chart__head"><div><p class="section-kicker">CALCULATED FROM THE DATASET</p><h3>'+esc(chart.title)+'</h3></div></div><p class="chat-chart__scope">'+esc(chart.scope)+'</p><div class="chat-chart__actions">'+(!expanded?'<button type="button" data-chart-expand>Open larger ↗</button>':'')+'<button type="button" data-chart-csv>Download CSV</button><button type="button" data-chart-svg>Save SVG</button></div><div class="chat-chart__plot"></div><p class="chat-chart__axis">'+esc(chart.type==='scatter'?chart.x_label+' · '+chart.y_label:chart.x_label)+'</p><p class="chat-chart__tooltip" role="status">Tap a bar, slice or point to inspect its evidence.</p>'+table(chart)+'<details class="chat-chart__context"><summary>Source &amp; limitations</summary><p>Source: '+esc(chart.source)+' · '+num(chart.n_total,0)+' matching catalogue listings.</p><ul>'+(chart.notes||[]).map(function(note){return '<li>'+esc(note)+'</li>';}).join('')+'</ul></details>';
+    host.innerHTML='<div class="chat-chart__head"><div><p class="section-kicker">CALCULATED FROM THE DATASET</p><h3>'+esc(chart.title)+'</h3></div></div><p class="chat-chart__scope">'+esc(chart.scope)+'</p><div class="chat-chart__actions">'+(options&&options.dashboardAction?'<button type="button" data-chart-dashboard>View on dashboard ↗</button>':'')+(!expanded?'<button type="button" data-chart-expand>Open larger ↗</button>':'')+'<button type="button" data-chart-csv>Download CSV</button><button type="button" data-chart-svg>Save SVG</button></div><div class="chat-chart__plot"></div><p class="chat-chart__axis">'+esc(chart.type==='scatter'?chart.x_label+' · '+chart.y_label:chart.x_label)+'</p><p class="chat-chart__tooltip" role="status">Tap a bar, slice or point to inspect its evidence.</p>'+table(chart)+'<details class="chat-chart__context"><summary>Source &amp; limitations</summary><p>Source: '+esc(chart.source)+' · '+num(chart.n_total,0)+' matching catalogue listings.</p><ul>'+(chart.notes||[]).map(function(note){return '<li>'+esc(note)+'</li>';}).join('')+'</ul></details>';
     var plot=host.querySelector('.chat-chart__plot');
     var lastWidth=0;
     function draw(){var width=Math.max(260,Math.round(host.clientWidth-26));if(width===lastWidth)return;lastWidth=width;plot.innerHTML=svg(chart,width,id);}
@@ -88,6 +88,8 @@
     plot.addEventListener('click',inspect);plot.addEventListener('mouseover',inspect);plot.addEventListener('focusin',inspect);
     plot.addEventListener('keydown',function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();inspect(event);}});
     host.querySelector('[data-chart-csv]').addEventListener('click',function(){csv(chart);});
+    var dashboard=host.querySelector('[data-chart-dashboard]');
+    if(dashboard)dashboard.addEventListener('click',function(){host.dispatchEvent(new CustomEvent('lci:chart-to-dashboard',{bubbles:true,detail:{chart:chart,question:options.question||chart.title}}));});
     host.querySelector('[data-chart-svg]').addEventListener('click',function(){
       var node=plot.querySelector('svg').cloneNode(true),styles=getComputedStyle(host);
       node.querySelectorAll('[fill],[stroke]').forEach(function(el){['fill','stroke'].forEach(function(attr){var val=el.getAttribute(attr),match=val&&val.match(/^var\((--[a-z0-9-]+)\)$/);if(match)el.setAttribute(attr,styles.getPropertyValue(match[1]).trim());});});
@@ -113,5 +115,6 @@
       dialog.addEventListener('click',function(event){if(event.target===dialog){var r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
     });
   }
-  window.ChatCharts={mount:function(container,charts){(charts||[]).slice(0,3).forEach(function(chart){if(!valid(chart))return;var host=document.createElement('section');container.appendChild(host);mountOne(host,chart,false);});}};
+  function clear(container){container.querySelectorAll('.chat-chart').forEach(function(host){if(host._chartObserver)host._chartObserver.disconnect();});container.innerHTML='';}
+  window.ChatCharts={clear:clear,mount:function(container,charts,options){clear(container);(charts||[]).slice(0,3).forEach(function(chart){if(!valid(chart))return;var host=document.createElement('section');container.appendChild(host);mountOne(host,chart,false,options);});}};
 })();

@@ -267,3 +267,15 @@ h1, h2, h3 { color: var(--heading); }
 .chat-chart-dialog .chat-chart__head h3 { font-size: 22px; }
 @media (max-width: 600px) { .chat-chart-dialog { padding: 16px; } .chat-chart__actions button { min-height: 36px; } }
 @media (max-width: 1300px) { .col--search { position: static; } }
+
+.dashboard-visualization { margin-top: 15px; padding: 18px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; scroll-margin-top: 94px; }
+.dashboard-visualization__head h3 { font-size: 16px; line-height: 1.5; }
+.dashboard-visualization__head p:not(.section-kicker) { font-size: 11px; color: var(--ink-2); line-height: 1.6; margin-top: 4px; }
+.dashboard-chart-presets { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+.dashboard-chart-presets button { font: inherit; font-size: 11px; color: var(--brand); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+.dashboard-chart-presets button.is-active { background: #5946bb; color: #fff; border-color: #5946bb; }
+.dashboard-chart-question { font-size: 10px; color: var(--ink-muted); line-height: 1.7; margin: 11px 0; overflow-wrap: anywhere; }
+.dashboard-visualization .chat-chart { border: 0; padding: 0; }
+.dashboard-visualization .chat-chart__head h3 { font-size: 17px; }
+.chat-chart__actions [data-chart-dashboard] { background: var(--brand-soft); border-color: var(--brand); font-weight: 650; }
+@media (max-width: 600px) { .dashboard-visualization { padding: 14px; } .dashboard-chart-presets button { min-height: 38px; font-size: 10px; } }

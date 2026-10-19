@@ -159,6 +159,11 @@
 
   /* ------------------------------------------------------------ app state */
 
+  var DASHBOARD_CHARTS = {
+    scatter: "Plot price vs rating for gaming laptops under $1200",
+    prices: "Show median listed price by segment as a bar chart",
+    sentiment: "Graph positive review sentiment by aspect for budget laptops"
+  };
   var STATE = {
     overview: null,
     segments: null,
@@ -171,6 +176,7 @@
     activeTab: "market",
     overviewError: null,
     tourStep: -1,
+    dashboardChart: { question: DASHBOARD_CHARTS.scatter, chart: null, error: null, loading: false, requestId: 0, cache: {}, observer: null, origin: "Featured dataset view" },
     loaded: { overview: false, competitors: false, pricing: false, reviews: false },
     chat: { msgSeq: 0, busy: false, llm: null, pollTimer: null }
   };
@@ -527,6 +533,8 @@
 
   function renderMarketTab() {
     var el = $("#panel-market"), ov = STATE.overview;
+    if (STATE.dashboardChart.observer) { STATE.dashboardChart.observer.disconnect(); STATE.dashboardChart.observer = null; }
+    if (window.ChatCharts) { var previous = $("#dashboardChart"); if (previous) window.ChatCharts.clear(previous); }
     if (!ov) {
       el.innerHTML = STATE.overviewError ? errorHTML(STATE.overviewError, "retryMarket") : loadingHTML("Preparing the market overview…");
       var retry = $("#retryMarket");
@@ -561,6 +569,10 @@
       '<section class="card market-chart market-chart--brands"><header class="card__head"><div><p class="section-kicker">CATALOGUE LANDSCAPE</p>' +
       '<h3>Largest brands in the dataset</h3></div></header><div class="card__body">' + hbarsHTML(brandRows, { labelWidth: 77 }) +
       '</div><div class="card__foot">Listing counts in this research dataset, not sales volume or real-world market share.</div></section></div>' +
+      '<section class="dashboard-visualization" id="dashboardVisualization" aria-labelledby="dashboardChartTitle"><header class="dashboard-visualization__head"><div><p class="section-kicker">INTERACTIVE DATA EXPLORER</p>' +
+      '<h3 id="dashboardChartTitle">Explore prices, ratings and review sentiment</h3><p>Choose a view, or send a chart here from the analyst.</p></div></header>' +
+      '<div class="dashboard-chart-presets" aria-label="Dashboard chart views"><button type="button" data-dashboard-chart="scatter">Price vs rating</button><button type="button" data-dashboard-chart="prices">Segment prices</button><button type="button" data-dashboard-chart="sentiment">Review sentiment</button></div>' +
+      '<p class="dashboard-chart-question" id="dashboardChartQuestion"></p><div id="dashboardChart" aria-live="polite"></div></section>' +
       '<div class="market-note"><span class="market-note__icon" aria-hidden="true">i</span><span><strong>Coverage is part of the story.</strong> Only ' +
       pct(ov.price.coverage, 1) + ' of listings have a price (' + n(ov.price.n_priced) + ' of ' + n(ov.price.n_total) +
       '). Price comparisons describe that subset; an unavailable price is never treated as $0.</span></div>' +
@@ -568,6 +580,56 @@
       '<span><strong>Find relevant competitors</strong><small>See the matching model in action.</small></span><span aria-hidden="true">→</span></button>' +
       '<button type="button" class="market-action" data-explore-tab="reviews"><span class="market-action__icon" aria-hidden="true">≋</span>' +
       '<span><strong>Go beyond the star rating</strong><small>Explore opinions and source reviews.</small></span><span aria-hidden="true">→</span></button></div>';
+    renderDashboardChart();
+  }
+
+  function renderDashboardChart() {
+    var host = $("#dashboardChart"), state = STATE.dashboardChart;
+    if (!host) return;
+    host.setAttribute("aria-busy", state.loading ? "true" : "false");
+    $("#dashboardChartQuestion").textContent = state.origin + " · " + state.question;
+    $$("[data-dashboard-chart]").forEach(function (button) {
+      var active = DASHBOARD_CHARTS[button.dataset.dashboardChart] === state.question;
+      button.classList.toggle("is-active", active); button.setAttribute("aria-pressed", String(active));
+    });
+    if (window.ChatCharts) window.ChatCharts.clear(host);
+    if (state.chart) { window.ChatCharts.mount(host, [state.chart]); return; }
+    if (state.error) {
+      host.innerHTML = errorHTML(state.error, "retryDashboardChart");
+      $("#retryDashboardChart").addEventListener("click", function () { loadDashboardChart(state.question, state.origin); });
+      return;
+    }
+    host.innerHTML = loadingHTML(state.loading ? "Calculating the chart from the matching dataset…" : "The chart loads as you scroll into this section…");
+    if (state.loading) return;
+    if (state.observer) state.observer.disconnect();
+    if (window.IntersectionObserver) {
+      var observer = new IntersectionObserver(function (entries) {
+        if (state.observer === observer && entries.some(function (entry) { return entry.isIntersecting; })) {
+          observer.disconnect(); state.observer = null;
+          if (!state.chart && !state.loading) loadDashboardChart(state.question, state.origin);
+        }
+      }, { rootMargin: "240px" });
+      state.observer = observer; observer.observe(host);
+    } else loadDashboardChart(state.question, state.origin);
+  }
+
+  function loadDashboardChart(question, origin) {
+    var state = STATE.dashboardChart, requestId = ++state.requestId;
+    if (state.observer) { state.observer.disconnect(); state.observer = null; }
+    state.question = question; state.origin = origin; state.error = null; state.chart = state.cache[question] || null;
+    state.loading = !state.chart;
+    renderDashboardChart();
+    if (state.chart) return;
+    api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: question, max_new_tokens: 420, temperature: 0 }) }).then(function (payload) {
+      if (requestId !== state.requestId) return;
+      if (!payload.charts || !payload.charts.length) throw new Error(payload.answer || "No chart data was returned for this view.");
+      state.chart = payload.charts[0]; state.cache[question] = state.chart; state.loading = false;
+      renderDashboardChart();
+    }).catch(function (error) {
+      if (requestId !== state.requestId) return;
+      state.loading = false; state.error = error; renderDashboardChart();
+    });
   }
 
   function updateProductLocation() {
@@ -1868,7 +1930,7 @@
           "No evidence was retrieved for this question, so the answer is not grounded in the " +
           "catalogue. Treat it as a refusal, not a result.</span></div>");
 
-    if (window.ChatCharts) window.ChatCharts.mount($(".msg__charts", container), payload.charts);
+    if (window.ChatCharts) window.ChatCharts.mount($(".msg__charts", container), payload.charts, { dashboardAction: true, question: payload.question });
 
     // citation marker -> reveal its evidence block
     $$(".cite", container).forEach(function (btn) {
@@ -1995,6 +2057,22 @@
   /* ==================================================================== */
 
   function wire() {
+    document.addEventListener("lci:chart-to-dashboard", function (event) {
+      if (!event.detail || !event.detail.chart) return;
+      var state = STATE.dashboardChart;
+      ++state.requestId;
+      state.question = event.detail.question; state.chart = event.detail.chart;
+      state.error = null; state.loading = false; state.origin = "From your chat";
+      activateTab("market");
+      var target = $("#dashboardVisualization");
+      if (target) target.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      else scrollToWorkspace();
+      toast("The same chart and filters are now open in the dashboard.");
+    });
+    document.addEventListener("click", function (event) {
+      var button = event.target.closest ? event.target.closest("[data-dashboard-chart]") : null;
+      if (button) loadDashboardChart(DASHBOARD_CHARTS[button.dataset.dashboardChart], "Dashboard preset");
+    });
     $(".brand-name").addEventListener("click", function (event) {
       event.preventDefault();
       showTourStep(-1);

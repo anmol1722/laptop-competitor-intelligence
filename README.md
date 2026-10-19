@@ -216,6 +216,8 @@ Examples:
 
 Charts support inspection by mouse, touch or keyboard, a larger dialog, an exact-data table, CSV download and SVG export. Price charts exclude unknown prices and show sample sizes and coverage. Sentiment shares are weighted by review counts; negative shares use the review polarity records rather than assuming that all non-positive reviews are negative. Scatter plots show a reproducible sample of at most 180 eligible listings. Counts describe this dataset, not market sales. Time-series prices, forecasts, unsupported groupings and currency conversion receive an explicit explanation instead of a fabricated chart.
 
+The main **Market overview** includes a price-versus-rating scatter plot and presets for segment prices and budget-laptop sentiment. Any chart in chat can be opened in the centre panel with **View on dashboard**, preserving the same data and filters without another request. Dashboard charts load as their section approaches the viewport, and preset results are reused during the page session. Product-specific sentiment remains in the **Reviews** tab.
+
 Run the hosted-chat and chart tests without provider credentials:
 
 ```bash
