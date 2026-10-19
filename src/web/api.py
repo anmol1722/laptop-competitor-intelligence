@@ -81,6 +81,7 @@ import sentiment  # noqa: E402
 from config import ASPECTS, PRODUCT_KEY, SEGMENTS  # noqa: E402
 from hosted_llm import HostedLLMError  # noqa: E402
 from web.chat_controls import ChatControls  # noqa: E402
+from web.chat_charts import chart_reply, wants_chart  # noqa: E402
 
 LOG = logging.getLogger("web.api")
 
@@ -1431,6 +1432,7 @@ class LLMManager:
             "loading": state == "loading",
             "available": state != "unavailable",
             "accepting_input": state in ("unloaded", "ready"),
+            "charts_available": STATE.products is not None,
             "model": self.model_name,
             "load_seconds": self.load_seconds,
             "answers_served": self.n_answers,
@@ -1527,6 +1529,7 @@ class LLMManager:
 
 LLM = LLMManager()
 CHAT_CONTROLS = ChatControls()
+CHART_RATE_LIMITER = ChatControls(limits=((20, 60), (120, 3600)))
 
 
 class ChatRequest(BaseModel):
@@ -1553,14 +1556,15 @@ def _chat_error(message: str, code: str, *, status: int = 503,
     )
 
 
-@app.post("/api/chat", summary="Grounded RAG answer with evidence and a hallucination audit")
+@app.post("/api/chat", summary="Evidence-grounded answers and dataset charts")
 def chat(request: Request, body: ChatRequest = Body(...)) -> Any:
     question = body.question.strip()
     if len(question) < 3:
         raise HTTPException(422, "question must contain at least 3 non-padding characters")
 
     # Trust the server's client address, never raw user-supplied forwarding headers.
-    retry_after = CHAT_CONTROLS.check_rate(request.client.host if request.client else "unknown")
+    controls = CHART_RATE_LIMITER if wants_chart(question) else CHAT_CONTROLS
+    retry_after = controls.check_rate(request.client.host if request.client else "unknown")
     if retry_after:
         return _chat_error(
             f"You have asked several questions recently. Please try again in {retry_after} seconds.",
@@ -1571,6 +1575,11 @@ def chat(request: Request, body: ChatRequest = Body(...)) -> Any:
     t0 = time.monotonic()
     payload = CHAT_CONTROLS.get_cached(key)
     cached = payload is not None
+    if payload is None and wants_chart(question):
+        chart_start = time.monotonic()
+        payload = chart_reply(question, STATE.require_products())
+        payload['timings'] = {'chart_s': round(time.monotonic() - chart_start, 3)}
+        CHAT_CONTROLS.cache_answer(key, payload)
     if payload is None:
         retry_after = CHAT_CONTROLS.retry_after()
         if retry_after:
@@ -1613,6 +1622,9 @@ def chat(request: Request, body: ChatRequest = Body(...)) -> Any:
         "question": question,
         "question_type": payload.get("question_type"),
         "answer": payload.get("answer"),
+        "charts": payload.get("charts", []),
+        "chart_status": payload.get("chart_status"),
+        "response_mode": payload.get("response_mode", "rag"),
         "evidence": evidence,
         "n_evidence": len(evidence),
         "audit": {

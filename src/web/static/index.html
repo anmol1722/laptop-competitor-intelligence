@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#44347a">
 <script>try { document.documentElement.dataset.theme = localStorage.getItem('lci-theme') === 'dark' ? 'dark' : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }</script>
 <link rel="stylesheet" href="styles.css?v=20261018">
-<link rel="stylesheet" href="portfolio.css?v=20261018-colors">
+<link rel="stylesheet" href="portfolio.css?v=20261019-charts">
 <!-- The optional scatter chart library is loaded only when the competitor view opens. -->
 <script>window.__PLOTLY_BLOCKED__ = false;</script>
 </head>
@@ -199,7 +199,7 @@
       <header class="card__head card__head--chat">
         <div>
           <p class="section-kicker">A QUESTION WORTH ASKING</p><h2>Ask the analyst</h2>
-          <p class="card__sub">Explore the data through conversation.</p>
+          <p class="card__sub">Ask a question. Explore the answer and its chart.</p>
         </div>
         <span class="pill pill--muted" id="llmPill">Connecting…</span>
       </header>
@@ -208,14 +208,14 @@
         <div class="chat__intro">
           <div class="assistant-mark" aria-hidden="true">✳</div>
           <h3>Curiosity, backed by evidence.</h3>
-          <p>Ask about products, prices or customer opinions. Open the citations to see the records behind an answer, and its audit to check unsupported claims.</p>
+          <p>Ask for a chart of prices, ratings or review sentiment. Charts use the matching dataset rows and show their sources. For AI analysis, open the citations and answer audit.</p>
           <p class="chat__suggestion-label">TRY A QUESTION</p>
           <div class="chat__suggestions" id="chatSuggestions">
             <button type="button" class="chip" data-q="What is the best gaming laptop under $1200?">Best gaming laptop under $1200?</button>
-            <button type="button" class="chip" data-q="How do Lenovo and HP business laptops compare on price?">Lenovo vs HP on price</button>
-            <button type="button" class="chip" data-q="What do reviewers complain about most in budget laptops?">Top complaints in budget laptops</button>
+            <button type="button" class="chip" data-q="Show a bar chart comparing median prices of HP and Lenovo business laptops">Graph HP vs Lenovo prices</button>
+            <button type="button" class="chip" data-q="Graph positive review sentiment by aspect for budget laptops">Graph budget laptop sentiment</button>
           </div>
-          <p class="chat__timing">Answers may take about a minute. The first question can take longer.</p>
+          <p class="chat__timing">Dataset charts calculate directly. AI text answers may take about a minute; the first question can take longer.</p>
         </div>
       </div>
 
@@ -223,7 +223,7 @@
 
       <form class="chat__form" id="chatForm">
         <textarea id="chatInput" rows="2" maxlength="1000"
-                  placeholder="Ask about products, prices, competitors or what reviewers say…"
+                  placeholder="Try: Graph median price by segment…"
                   aria-label="Your question"></textarea>
         <div class="chat__formrow">
           <span class="chat__hint" id="chatHint">Enter to send &middot; Shift+Enter for a new line</span>
@@ -247,6 +247,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="app.js?v=20261018"></script>
+<script src="chat-charts.js?v=20261019"></script>
+<script src="app.js?v=20261019-charts"></script>
 </body>
 </html>

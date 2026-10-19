@@ -1656,11 +1656,11 @@
     var m = map[st.state] || ["pill--muted", st.state];
     pill.className = "pill " + m[0];
     pill.textContent = m[1];
+    if (st.state === "unavailable" && st.charts_available) pill.textContent = "Charts ready";
     pill.title = st.model + (st.load_seconds ? " · loaded in " + st.load_seconds + " s" : "") +
       " · answers served " + st.answers_served;
 
-    var blocked = STATE.chat.busy || st.accepting_input === false ||
-      st.state === "loading" || st.state === "unavailable";
+    var blocked = STATE.chat.busy;
     input.disabled = blocked;
     send.disabled = blocked;
 
@@ -1670,8 +1670,8 @@
       hint.textContent = "preparing chat…";
     } else if (st.state === "unavailable") {
       notice.hidden = false;
-      notice.textContent = st.error || st.hint || "Chat is currently unavailable.";
-      hint.textContent = "chat unavailable";
+      notice.textContent = "AI text answers are unavailable. Dataset charts still work: try ‘Graph median price by segment’.";
+      hint.textContent = "Chart tools are available";
     } else if (STATE.chat.busy) {
       notice.hidden = false;
       notice.innerHTML = '<span class="spinner"></span> Finding evidence and preparing your answer.';
@@ -1851,6 +1851,7 @@
 
     container.className = "msg msg--bot";
     container.innerHTML =
+      '<div class="msg__charts"></div>' +
       '<div class="msg__bubble">' + linkifyCitations(payload.answer || "(empty answer)", msgId, byMarker) + "</div>" +
       '<div class="msg__audit">' + a.badge +
       "<span>" + n(evidence.length) + " evidence block" + (evidence.length === 1 ? "" : "s") +
@@ -1866,6 +1867,8 @@
         : '<div class="callout callout--warn"><span class="callout__icon">!</span><span>' +
           "No evidence was retrieved for this question, so the answer is not grounded in the " +
           "catalogue. Treat it as a refusal, not a result.</span></div>");
+
+    if (window.ChatCharts) window.ChatCharts.mount($(".msg__charts", container), payload.charts);
 
     // citation marker -> reveal its evidence block
     $$(".cite", container).forEach(function (btn) {
@@ -1904,7 +1907,10 @@
       });
     });
 
-    chatScroll();
+    if (payload.charts && payload.charts.length) {
+      var log = $("#chatLog");
+      log.scrollTop += container.getBoundingClientRect().top - log.getBoundingClientRect().top - 12;
+    } else chatScroll();
   }
 
   function sendQuestion(text) {

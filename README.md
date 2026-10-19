@@ -197,9 +197,30 @@ GROQ_MODEL=openai/gpt-oss-120b
 
 The model can be changed with `GROQ_MODEL`; choose one available to your account. Consult the current [supported models](https://console.groq.com/docs/models) and [account limits](https://console.groq.com/docs/rate-limits). Free requests and tokens are shared by all visitors. Their questions and selected product/review evidence are sent to Groq.
 
-The public chat endpoint limits each client IP to **3 requests per minute and 20 per hour**, including cached answers. Successful answers are cached for **10 minutes**, up to **128 entries**, with separate keys for provider, model, question and generation settings. A provider HTTP 429 starts a shared cooldown; responses include `Retry-After`, and the retry button waits for that delay. Cached answers can still be served during the cooldown. Timeouts and service failures return structured errors without exposing credentials or raw provider responses.
+Hosted text requests are limited per client IP to **3 per minute and 20 per hour**, including cached answers. Dataset chart requests have a separate allowance of **20 per minute and 120 per hour**. Successful answers are cached for **10 minutes**, up to **128 entries**, with separate keys for provider, model, question and generation settings. A provider HTTP 429 starts a shared cooldown; responses include `Retry-After`, and the retry button waits for that delay. Cached answers and dataset charts can still be served during the cooldown. Timeouts and service failures return structured errors without exposing credentials or raw provider responses.
 
 These controls are in memory and reset on restart. Run **one Uvicorn worker** for this deployment; multiple workers/replicas would need shared rate-limit/cache storage. Behind a reverse proxy, configure Uvicorn to trust forwarding headers only from that proxy's IP so limits apply to visitor IPs. Visitors sharing an IP share the local allowance.
+
+### Ask for charts in chat
+
+The assistant can run deterministic chart tools against the full filtered catalogue. It reuses the RAG question parser to select brands, segments, budgets and hardware filters, then calculates the values in Python. Chart requests do not call the hosted model or execute generated code, and remain available without a Groq key. The chat response includes `response_mode: "data_chart"`, `charts`, a calculated explanation and a citable source block. Other questions keep the existing RAG generation and audit workflow.
+
+Examples:
+
+- `Show a bar chart comparing median prices of HP and Lenovo business laptops`
+- `Graph positive review sentiment by aspect for budget laptops`
+- `Graph negative battery sentiment for HP and Lenovo`
+- `Plot price vs rating for gaming laptops under $1200`
+- `Show the gaming laptop price distribution`
+- `Show a pie chart of laptop listing counts by brand`
+
+Charts support inspection by mouse, touch or keyboard, a larger dialog, an exact-data table, CSV download and SVG export. Price charts exclude unknown prices and show sample sizes and coverage. Sentiment shares are weighted by review counts; negative shares use the review polarity records rather than assuming that all non-positive reviews are negative. Scatter plots show a reproducible sample of at most 180 eligible listings. Counts describe this dataset, not market sales. Time-series prices, forecasts, unsupported groupings and currency conversion receive an explicit explanation instead of a fabricated chart.
+
+Run the hosted-chat and chart tests without provider credentials:
+
+```bash
+python -m unittest discover -s src/web -p 'test_chat*.py' -v
+```
 
 ### Optional local NVIDIA model
 
