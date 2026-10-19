@@ -46,6 +46,10 @@ class ChartDataTests(unittest.TestCase):
         self.assertFalse(rows['HP']['reliable'])
         self.assertEqual(c['n_total'],4)
         self.assertEqual(c['n_valid'],3)
+        reply=self.reply('Graph median prices of HP and Lenovo business laptops')
+        self.assertEqual(reply['citation_rate'],1)
+        self.assertEqual(reply['uncited_sentences'],[])
+        self.assertEqual(reply['unverified_numbers'],[])
 
     def test_budget_ram_and_segment_filters_are_not_relaxed(self):
         c=self.chart('Graph mean price by brand for business laptops under $400 with 16 GB RAM')

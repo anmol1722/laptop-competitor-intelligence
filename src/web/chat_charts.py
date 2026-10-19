@@ -14,7 +14,7 @@ import pandas as pd
 import pricing
 import sentiment
 
-CHART_VERSION = 1
+CHART_VERSION = 2
 _CHART = re.compile(r"\b(charts?|graphs?|plots?|visuali[sz]e|visuali[sz]ation|histogram|scatter(?:plot)?|pie|bar chart)\b", re.I)
 _PRICE = re.compile(r"\b(pric\w*|cost\w*|expensive|cheap\w*|budget|keemat)\b", re.I)
 _SENTIMENT = re.compile(r"\b(sentiment|positive|negative|complaints?|praise|opinions?|satisfaction)\b", re.I)
@@ -36,11 +36,15 @@ def _label(value: str) -> str:
     return value.replace('_', ' ').title()
 
 
+def _cite(text: str) -> str:
+    return re.sub(r'([.!?])(?:\s+|$)', r' [S1]\1\n', text).strip()
+
+
 def chart_reply(question: str, products: pd.DataFrame,
                 product_sentiment: pd.DataFrame | None = None) -> dict[str, Any] | None:
     if not wants_chart(question):
         return None
-    from rag import parse_question  # parsing only; no retriever or model loading
+    from rag import Evidence, RagAnswer, audit_answer, parse_question  # no model loading
 
     spec = parse_question(question, list(products['brand'].dropna().unique()))
     q = question.lower()
@@ -246,7 +250,7 @@ def chart_reply(question: str, products: pd.DataFrame,
         notes.append('A bar/scatter chart is used because these values do not form a time series or parts of a whole.')
 
     if failure:
-        answer = failure+' [S1]'
+        answer = _cite(failure)
         evidence_text = '[S1] Chart tool result. '+failure+' Scope: '+scope_label+'.'
         status = 'unavailable'
     else:
@@ -268,14 +272,16 @@ def chart_reply(question: str, products: pd.DataFrame,
         else:
             summary=(f"The chart shows {sum(r['value'] for r in rows):,} retained dataset reviews across {total:,} matching listings."
                      if chart['unit']=='reviews' else f"The chart shows the distribution of {total:,} matching catalogue listings.")
-        answer = summary+' [S1]\nScope: '+scope_label+'. [S1]\n'+notes[0]+' [S1]'
+        answer = '\n'.join((_cite(summary), _cite('Scope: '+scope_label+'.'), _cite(notes[0])))
         evidence_text = '[S1] '+summary+' Scope: '+scope_label+'. '+ ' '.join(notes)
         status = 'ready'
-    return dict(question_type='chart', answer=answer, charts=charts, chart_status=status,
-                response_mode='data_chart', evidence=[dict(marker='[S1]', kind='stat', text=evidence_text,
-                meta=dict(source=('products.parquet + product_sentiment.parquet' + (' + review_sentiment.parquet' if negative else '')) if is_sentiment else 'products.parquet',
-                          scope=scope_label, filters=filters, n_products=total, chart=charts[0] if charts else None))],
-                grounded=True, citation_rate=1.0, citations=[dict(marker='[S1]', kind='stat')],
-                unsupported_markers=[], unverified_numbers=[], misattributed_reviews=[], uncited_sentences=[],
-                truncated=False, query_spec=spec.to_dict(), retrieval=dict(method='catalogue_chart_tool', n_evidence=1),
-                timings={}, prompt_chars=0)
+    evidence = [Evidence('[S1]', 'stat', evidence_text,
+                dict(source=('products.parquet + product_sentiment.parquet' + (' + review_sentiment.parquet' if negative else '')) if is_sentiment else 'products.parquet',
+                     scope=scope_label, filters=filters, n_products=total, chart=charts[0] if charts else None))]
+    audit = audit_answer(answer, evidence)
+    result = RagAnswer(question=question, question_type='chart', answer=answer,
+                       evidence=evidence, query_spec=spec.to_dict(),
+                       retrieval=dict(method='catalogue_chart_tool', n_evidence=1),
+                       timings={}, prompt_chars=0, **audit).to_dict()
+    result.update(charts=charts, chart_status=status, response_mode='data_chart')
+    return result
